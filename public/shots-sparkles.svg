@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Shots and Sparkles</title>
+  <desc id="desc">Circular coffee shop brand icon with coffee cups and sparkle details.</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <circle cx="128" cy="128" r="116" fill="#1c1715"/>
+  <circle cx="128" cy="128" r="105" fill="#f4efe7" stroke="#d8ba77" stroke-width="4"/>
+
+  <g filter="url(#shadow)">
+    <path d="M94 72c-16 0-28 12-28 28 0 17 19 31 32 38l-1 30h36l-2-30c16-6 31-22 31-38 0-16-12-28-28-28h-40z" fill="#d8ba77"/>
+    <path d="M88 82c-9 0-16 7-16 16 0 11 10 18 20 23l-1 18h20l-1-18c12-5 20-12 20-23 0-9-7-16-16-16h-26z" fill="#f7f0dd"/>
+    <path d="M101 64c6-11 19-18 32-18 25 0 38 19 38 38 0 9-3 18-8 25l4 13c18 0 32 15 32 32 0 12-7 22-18 28l-8 3 5 15-27 14-10-10 5-24-16-3-7-18 10-25-14-26-17-18 9-9-10-5z" fill="#e2c884" opacity="0.34"/>
+  </g>
+
+  <g>
+    <path d="M88 148h58c4 0 7 3 7 7v11c0 12-9 20-21 20H102c-12 0-21-8-21-20v-11c0-4 3-7 7-7z" fill="#f8f0e4"/>
+    <path d="M82 151h70c7 0 13 5 13 12v4c0 20-16 35-35 35H104c-19 0-35-15-35-35v-4c0-7 6-12 13-12z" fill="#d8b576" opacity="0.2"/>
+    <path d="M81 161h74" stroke="#e9d3a7" stroke-width="4" stroke-linecap="round"/>
+    <path d="M95 148v-34c0-16 13-29 29-29s29 13 29 29v34" fill="none" stroke="#f7f0e4" stroke-width="8" stroke-linecap="round"/>
+    <path d="M71 158c-18 0-33 12-36 29h13c2-11 12-18 23-18Z" fill="#f5f0e6"/>
+    <path d="M177 157c18 0 33 12 36 29h-13c-2-11-12-18-23-18Z" fill="#f5f0e6"/>
+    <path d="M120 117c0-9 7-16 16-16s16 7 16 16" fill="none" stroke="#b77851" stroke-width="4" stroke-linecap="round"/>
+    <path d="M116 120c5 15 26 17 36 3" fill="none" stroke="#8f6241" stroke-width="3" stroke-linecap="round"/>
+    <path d="M127 117c0 0-6 8-6 16 0 16 14 27 26 27 8 0 14-3 20-8" fill="none" stroke="#8f6241" stroke-width="3" stroke-linecap="round"/>
+    <path d="M132 98c-4 0-7 3-7 7v7h14v-7c0-4-3-7-7-7Z" fill="#f7f0e4"/>
+  </g>
+
+  <g fill="#d8ba77">
+    <circle cx="67" cy="51" r="5"/>
+    <circle cx="190" cy="54" r="4.5"/>
+    <circle cx="203" cy="89" r="4"/>
+    <circle cx="60" cy="93" r="3.5"/>
+    <circle cx="76" cy="188" r="3.5"/>
+    <circle cx="188" cy="183" r="4.5"/>
+    <circle cx="188" cy="81" r="3.5"/>
+  </g>
+
+  <g fill="#f5efe6">
+    <circle cx="72" cy="192" r="2.5"/>
+    <circle cx="181" cy="118" r="2.5"/>
+    <circle cx="92" cy="47" r="2.5"/>
+  </g>
+
+  <g font-family="Georgia, 'Times New Roman', serif" text-anchor="middle">
+    <text x="128" y="102" fill="#1e1513" font-weight="700" font-size="28" letter-spacing="1.3">SHOTS</text>
+    <text x="128" y="133" fill="#d8ba77" font-weight="700" font-size="30" letter-spacing="0.5">&amp;</text>
+    <text x="128" y="166" fill="#1e1513" font-weight="700" font-size="28" letter-spacing="1.2">SPARKLES</text>
+  </g>
+
+  <g transform="translate(128 128)">
+    <path d="M-28 58c16 6 26 18 31 31" fill="none" stroke="#d1b46a" stroke-width="4" stroke-linecap="round"/>
+    <path d="M28 58c-16 6-26 18-31 31" fill="none" stroke="#d1b46a" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,18 @@
+{
+  "name": "Shots & Sparkles POS",
+  "short_name": "S&S POS",
+  "description": "Point of sale and store management for Shots & Sparkles.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#251a16",
+  "theme_color": "#251a16",
+  "icons": [
+    {
+      "src": "/shots-sparkles.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
