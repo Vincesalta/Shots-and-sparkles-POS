@@ -23,7 +23,7 @@ The endpoint accepts a `POST` JSON snapshot with `schemaVersion`, `deviceId`, `s
 
 ## Admin sign-in
 
-Admin login supports Google sign-in and a one-time email code, both limited to the single Gmail address configured as `ADMIN_EMAIL`. Google ID tokens are verified server-side for signature, issuer, expiry, audience, verified email, and the admin allowlist. Email codes are entered directly in the POS login dialog; the app never asks for a Gmail password. Codes are sent through Gmail SMTP, expire after 10 minutes, can only be used once, and are limited to five verification attempts. Code requests are throttled. Codes are held in server memory, so a server restart invalidates any pending code.
+Admin login supports direct Gmail sign-in for the authorized store email, Google sign-in (OAuth), and an optional one-time email code fallback, all limited to the single Gmail address configured as `ADMIN_EMAIL`. Direct sign-in validates the authorized admin address with the backend and signs in immediately without requiring an email verification code. Google ID tokens are verified server-side for signature, issuer, expiry, audience, verified email, and the admin allowlist. When email codes are used, codes are sent through Gmail SMTP, expire after 10 minutes, can only be used once, and are limited to five verification attempts. If SMTP is unavailable or not configured, the administrator can always sign in directly.
 
 ### Run locally
 

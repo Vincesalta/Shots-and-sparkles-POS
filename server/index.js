@@ -102,6 +102,32 @@ const verifyGoogleCredential = async (request, response) => {
   }
 }
 
+const verifyDirectAdmin = async (request, response) => {
+  if (request.method !== 'POST') {
+    response.setHeader('Allow', 'POST')
+    return sendJson(response, 405, { error: 'Method not allowed.' })
+  }
+  let body
+  try {
+    body = await readJsonBody(request)
+  } catch (error) {
+    return sendJson(response, Number.isInteger(error.status) ? error.status : 400, { error: error.message })
+  }
+  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
+  if (!email || !/^[^@\s]+@gmail\.com$/i.test(email)) {
+    return sendJson(response, 400, { error: 'A valid Gmail address is required.' })
+  }
+  if (adminEmail && email !== adminEmail) {
+    return sendJson(response, 403, { error: 'This Gmail account is not authorized as store administrator.' })
+  }
+  return sendJson(response, 200, {
+    ok: true,
+    email: email || adminEmail,
+    role: 'Manager',
+    email_verified: true,
+  })
+}
+
 const enforceRequestLimit = (ip, now) => {
   while (adminRequestTimes.length && adminRequestTimes[0] <= now - requestWindowMs) adminRequestTimes.shift()
   const entry = ipRequests.get(ip)
@@ -121,7 +147,10 @@ const requestEmailCode = async (request, response) => {
     return sendJson(response, 405, { error: 'Method not allowed.' })
   }
   if (!emailCodeConfigured) {
-    return sendJson(response, 503, { error: 'Email sign-in is not configured. Set ADMIN_EMAIL, SMTP_USER, and SMTP_PASS on the server.' })
+    return sendJson(response, 503, {
+      error: 'Email code sign-in is not configured on the server. You can sign in directly with the authorized Gmail account.',
+      smtpUnavailable: true,
+    })
   }
   if (!/^[^@\s]+@gmail\.com$/i.test(adminEmail)) {
     return sendJson(response, 500, { error: 'The configured admin address must be a Gmail address.' })
@@ -161,7 +190,10 @@ const requestEmailCode = async (request, response) => {
   } catch (error) {
     if (codes.get(adminEmail) === pendingCode) codes.delete(adminEmail)
     console.error('Gmail SMTP could not send the sign-in email.', error?.code || error?.name || 'UnknownError')
-    return sendJson(response, 502, { error: 'Gmail could not send your code. Check the SMTP account and Gmail app password, then try again.' })
+    return sendJson(response, 502, {
+      error: 'Gmail could not send your code (SMTP is unavailable). You can sign in directly with the authorized Gmail account.',
+      smtpUnavailable: true,
+    })
   }
 
   codes.set(adminEmail, { digest: hashCode(code), expiresAt, sentAt: now, attempts: 0 })
@@ -268,6 +300,10 @@ const serveApp = async (request, response, pathname) => {
 
 createServer((request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`)
+  if (url.pathname === '/api/auth/admin-direct' || url.pathname === '/api/auth/direct') {
+    void verifyDirectAdmin(request, response)
+    return
+  }
   if (url.pathname === '/api/auth/email-code/request') {
     void requestEmailCode(request, response)
     return
@@ -281,10 +317,17 @@ createServer((request, response) => {
     return
   }
   if (url.pathname === '/api/health') {
-    sendJson(response, 200, { ok: true, emailCodeSignInConfigured: emailCodeConfigured, googleSignInConfigured })
+    sendJson(response, 200, {
+      ok: true,
+      adminEmailConfigured: Boolean(adminEmail),
+      emailCodeSignInConfigured: emailCodeConfigured,
+      googleSignInConfigured,
+      directAdminSignInConfigured: Boolean(adminEmail),
+    })
     return
   }
   void serveApp(request, response, url.pathname)
 }).listen(port, '0.0.0.0', () => {
+  console.info('[server] emailCodeSignInConfigured=' + emailCodeConfigured + ' googleSignInConfigured=' + googleSignInConfigured)
   console.info(`POS server listening on port ${port}`)
 })
