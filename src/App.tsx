@@ -21,6 +21,21 @@ type StockItem = { id: string; name: string; quantity: number; unit: string; low
 type StockMovement = { id: string; date: string; itemId: string; itemName: string; action: 'Restock' | 'Adjustment' | 'Sale' | 'Deleted'; change: number; balance: number; actor: string }
 type Customer = { id: string; name: string; phone: string; email: string; notes: string; active: boolean }
 type StaffMember = { name: string; role: Role; status: 'Active' | 'On leave' }
+type GoogleIdentityApi = {
+  accounts: {
+    id: {
+      initialize: (options: { client_id: string; login_hint?: string; callback: (response: { credential: string }) => void }) => void
+      renderButton: (parent: HTMLElement, options: { theme: 'outline'; size: 'large'; shape: 'rectangular'; text: 'signin_with'; width: number }) => void
+    }
+  }
+}
+
+declare global {
+  interface Window {
+    google?: GoogleIdentityApi
+  }
+}
+
 const categoriesLabels = Object.fromEntries(categories.map((category) => [category.id, category.shortLabel])) as Record<CategoryId, string>
 const sameLocalDay = (date: string, reference: Date) => new Date(date).toDateString() === reference.toDateString()
 const isWithinPeriod = (date: string, start: Date, end: Date) => new Date(date) >= start && new Date(date) <= end
@@ -36,8 +51,10 @@ const authSessionTimeoutMs = 5 * 60 * 1000
 const gcashNumber = '09102733236'
 const syncEndpoint = import.meta.env.VITE_SYNC_API_URL?.trim() || ''
 const configuredAdminEmail = import.meta.env.VITE_ADMIN_EMAIL?.trim().toLowerCase() || ''
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() || ''
 const adminCodeRequestUrl = '/api/auth/email-code/request'
 const adminCodeVerifyUrl = '/api/auth/email-code/verify'
+const googleAuthVerifyUrl = '/api/auth/google/verify'
 const loadProducts = (): Product[] => {
   const saved = JSON.parse(localStorage.getItem('ss-products') || 'null') as Product[] | null
   const source = saved || initialProducts
@@ -161,6 +178,7 @@ function App() {
   const [adminCode, setAdminCode] = useState('')
   const [adminCodeSent, setAdminCodeSent] = useState(false)
   const [adminCodeBusy, setAdminCodeBusy] = useState(false)
+  const googleButtonRef = useRef<HTMLDivElement>(null)
   const [newProductName, setNewProductName] = useState('')
   const [newProductPrice, setNewProductPrice] = useState('60')
   const [newProductCategory, setNewProductCategory] = useState<CategoryId>('coffee')
@@ -472,6 +490,69 @@ function App() {
       setAdminCodeBusy(false)
     }
   }
+  const verifyGoogleAdminCredential = async (credential: string) => {
+    setAdminCodeBusy(true)
+    try {
+      const response = await fetch(googleAuthVerifyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential }),
+      })
+      const result = await response.json() as { email?: unknown; email_verified?: unknown; error?: unknown }
+      if (!response.ok) {
+        return notify(typeof result.error === 'string' ? result.error : `Google sign-in could not be verified (HTTP ${response.status}).`)
+      }
+      if (typeof result.email !== 'string' || result.email_verified !== true) {
+        return notify('Google did not verify this Gmail account.')
+      }
+      recordSignIn(result.email.trim().toLowerCase(), 'Manager')
+    } catch {
+      notify('Could not contact the Google sign-in service. Check your connection and try again.')
+    } finally {
+      setAdminCodeBusy(false)
+    }
+  }
+  useEffect(() => {
+    const button = googleButtonRef.current
+    if (modal !== 'login' || loginStage !== 'admin' || !googleClientId || !button) return
+    const renderButton = () => {
+      if (!window.google || !googleButtonRef.current) {
+        notify('Google sign-in could not load. Check your connection and try again.')
+        return
+      }
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        login_hint: configuredAdminEmail || undefined,
+        callback: (response) => void verifyGoogleAdminCredential(response.credential),
+      })
+      window.google.accounts.id.renderButton(googleButtonRef.current, {
+        theme: 'outline',
+        size: 'large',
+        shape: 'rectangular',
+        text: 'signin_with',
+        width: Math.min(340, Math.floor(googleButtonRef.current.getBoundingClientRect().width)),
+      })
+    }
+    const scriptId = 'google-identity-services'
+    const existingScript = document.getElementById(scriptId) as HTMLScriptElement | null
+    if (window.google) {
+      renderButton()
+      return
+    }
+    if (existingScript) {
+      existingScript.addEventListener('load', renderButton, { once: true })
+      existingScript.addEventListener('error', () => notify('Google sign-in could not load. Check your connection and try again.'), { once: true })
+      return () => existingScript.removeEventListener('load', renderButton)
+    }
+    const script = document.createElement('script')
+    script.id = scriptId
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.defer = true
+    script.onload = renderButton
+    script.onerror = () => notify('Google sign-in could not load. Check your connection and try again.')
+    document.head.appendChild(script)
+  }, [modal, loginStage, adminCodeSent])
   const verifyAdminCode = async () => {
     const email = adminEmail.trim().toLowerCase()
     const code = adminCode.trim()
@@ -533,7 +614,8 @@ function App() {
         <button className="role-choice" onClick={() => setLoginStage('admin')}><ShieldCheck size={20} /><span><b>Admin sign in</b><small>Single authorized Gmail account</small></span><ArrowRight size={16} /></button>
         <button className="role-choice" onClick={() => { setLoginName(''); setLoginStage('cashier') }}><UserRound size={20} /><span><b>Cashier sign in</b><small>Enter your name for the shift log</small></span><ArrowRight size={16} /></button>
       </>}
-      {loginStage === 'admin' && <><button className="back-link" onClick={() => { setLoginStage('roles'); setAdminCodeSent(false); setAdminCode('') }}><ArrowRight size={14} /> Back to roles</button><h2>Admin sign in</h2><p>{adminCodeSent ? `Enter the 6-digit code sent to ${adminEmail}.` : 'Get a one-time sign-in code sent directly to your Gmail.'}</p>
+      {loginStage === 'admin' && <><button className="back-link" onClick={() => { setLoginStage('roles'); setAdminCodeSent(false); setAdminCode('') }}><ArrowRight size={14} /> Back to roles</button><h2>Admin sign in</h2><p>{adminCodeSent ? `Enter the 6-digit code sent to ${adminEmail}, or continue with Google.` : 'Sign in with Google or get a one-time code sent to your Gmail.'}</p>
+        {googleClientId && <div className="google-login-section"><div className="google-signin-button" ref={googleButtonRef} /><div className="login-divider"><span>OR USE EMAIL CODE</span></div></div>}
         {adminCodeSent ? <>
           <label className="form-label">Email verification code<input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={adminCode} onChange={(event) => setAdminCode(event.target.value.replace(/\D/g, '').slice(0, 6))} onKeyDown={(event) => { if (event.key === 'Enter') void verifyAdminCode() }} placeholder="6-digit code" /></label>
           <button className="primary-button full-width" disabled={adminCodeBusy} onClick={() => void verifyAdminCode()}>{adminCodeBusy ? 'Verifying…' : 'Verify code and sign in'} <ArrowRight size={15} /></button>
@@ -543,7 +625,7 @@ function App() {
           {configuredAdminEmail && <div className="recommended-account"><span>Authorized admin Gmail</span><button type="button" onClick={() => setAdminEmail(configuredAdminEmail)}>{configuredAdminEmail}<b>Use this</b></button></div>}
           <label className="form-label">Admin Gmail<input type="email" autoComplete="email" value={adminEmail} onChange={(event) => setAdminEmail(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void requestAdminCode() }} placeholder={configuredAdminEmail || 'owner@gmail.com'} /></label>
           <button className="primary-button full-width" disabled={adminCodeBusy || !adminEmail.trim()} onClick={() => void requestAdminCode()}>{adminCodeBusy ? 'Sending code…' : 'Send sign-in code'} <ArrowRight size={15} /></button>
-          <small className="demo-note">Only the authorized store Gmail can sign in. Your email password is never requested.</small>
+          <small className="demo-note">Only the authorized store Gmail can sign in. Google or email-code sign-in works; your email password is never requested.</small>
         </>}
       </>}
       {loginStage === 'cashier' && <><button className="back-link" onClick={() => setLoginStage('roles')}><ArrowRight size={14} /> Back to roles</button><h2>Cashier sign in</h2><p>Your name will be attached to orders and shift activity.</p>

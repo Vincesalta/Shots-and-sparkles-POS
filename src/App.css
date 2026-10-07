@@ -187,6 +187,10 @@
 .hourly-order-column>span{color:#918579;font-size:8px}
 .report-chart-empty{min-height:155px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;color:#9a8e82;text-align:center}
 .report-chart-empty>span{max-width:240px;font-size:10px;line-height:1.5}
+.google-login-section{margin:14px 0 10px}
+.google-signin-button{display:flex;justify-content:center;min-height:40px}
+.login-divider{display:flex;align-items:center;gap:10px;margin:12px 0;color:#9a8e82;font-size:8px;letter-spacing:.08em}
+.login-divider:before,.login-divider:after{content:'';height:1px;flex:1;background:#eee9e1}
 .recommended-account{display:grid;gap:6px;margin:12px 0 4px}
 .recommended-account>span{color:#887b6e;font-size:9px;font-weight:600}
 .recommended-account>button{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:9px 11px;border:1px solid #dfe8dc;border-radius:7px;background:#f6f9f4;color:#3d5d42;text-align:left;font-size:11px}

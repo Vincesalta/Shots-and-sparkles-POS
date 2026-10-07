@@ -5,16 +5,20 @@ import { readFile, stat } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import nodemailer from 'nodemailer'
+import { OAuth2Client } from 'google-auth-library'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const dist = resolve(root, 'dist')
 const port = Number(process.env.PORT || 8787)
 const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase() || ''
+const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim() || ''
+const googleClient = new OAuth2Client(googleClientId || undefined)
 const smtpHost = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com'
 const smtpPort = Number(process.env.SMTP_PORT || 465)
 const smtpUser = process.env.SMTP_USER?.trim() || ''
 const smtpPass = process.env.SMTP_PASS?.replace(/\s/g, '') || ''
 const emailCodeConfigured = Boolean(adminEmail && smtpHost && Number.isInteger(smtpPort) && smtpUser && smtpPass)
+const googleSignInConfigured = Boolean(adminEmail && googleClientId)
 const mailTransport = nodemailer.createTransport({
   host: smtpHost,
   port: smtpPort,
@@ -61,6 +65,42 @@ const readJsonBody = async (request) => {
 
 const getRequestIp = (request) => request.socket.remoteAddress || 'unknown'
 const hashCode = (code) => createHmac('sha256', codeHashKey).update(code).digest()
+
+const verifyGoogleCredential = async (request, response) => {
+  if (request.method !== 'POST') {
+    response.setHeader('Allow', 'POST')
+    return sendJson(response, 405, { error: 'Method not allowed.' })
+  }
+  if (!googleSignInConfigured) {
+    return sendJson(response, 503, { error: 'Google sign-in is not configured on the server.' })
+  }
+  let body
+  try {
+    body = await readJsonBody(request)
+  } catch (error) {
+    return sendJson(response, Number.isInteger(error.status) ? error.status : 400, { error: error.message })
+  }
+  if (typeof body.credential !== 'string' || body.credential.length > 12_000) {
+    return sendJson(response, 400, { error: 'A valid Google credential is required.' })
+  }
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken: body.credential,
+      audience: googleClientId,
+    })
+    const payload = ticket.getPayload()
+    const email = payload?.email?.trim().toLowerCase()
+    if (!email || payload?.email_verified !== true) {
+      return sendJson(response, 401, { error: 'Google did not verify this email address.' })
+    }
+    if (email !== adminEmail) {
+      return sendJson(response, 403, { error: 'This Google account is not authorized for this store.' })
+    }
+    return sendJson(response, 200, { email, email_verified: true })
+  } catch {
+    return sendJson(response, 401, { error: 'Google credential is invalid or expired.' })
+  }
+}
 
 const enforceRequestLimit = (ip, now) => {
   while (adminRequestTimes.length && adminRequestTimes[0] <= now - requestWindowMs) adminRequestTimes.shift()
@@ -236,8 +276,12 @@ createServer((request, response) => {
     void verifyEmailCode(request, response)
     return
   }
+  if (url.pathname === '/api/auth/google/verify') {
+    void verifyGoogleCredential(request, response)
+    return
+  }
   if (url.pathname === '/api/health') {
-    sendJson(response, 200, { ok: true, emailCodeSignInConfigured: emailCodeConfigured })
+    sendJson(response, 200, { ok: true, emailCodeSignInConfigured: emailCodeConfigured, googleSignInConfigured })
     return
   }
   void serveApp(request, response, url.pathname)
