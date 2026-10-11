@@ -23,18 +23,17 @@ The endpoint accepts a `POST` JSON snapshot with `schemaVersion`, `deviceId`, `s
 
 ## Admin sign-in
 
-Admin login supports direct Gmail sign-in for the authorized store email, Google sign-in (OAuth), and an optional one-time email code fallback, all limited to the single Gmail address configured as `ADMIN_EMAIL`. Direct sign-in validates the authorized admin address with the backend and signs in immediately without requiring an email verification code. Google ID tokens are verified server-side for signature, issuer, expiry, audience, verified email, and the admin allowlist. When email codes are used, codes are sent through Gmail SMTP, expire after 10 minutes, can only be used once, and are limited to five verification attempts. If SMTP is unavailable or not configured, the administrator can always sign in directly.
+Admin login accepts only the Gmail configured as `ADMIN_EMAIL` and a separate store password configured as `ADMIN_PASSWORD` on the server. The password is checked server-side and must not be the Gmail account password or a Gmail app password. Sign-in attempts are rate limited. The optional SMTP email-code API is separate from password sign-in.
 
 ### Run locally
 
-1. Create a Google OAuth **Web application** client. Add `http://localhost:5173` to its authorized JavaScript origins. Use the existing client ID for both `GOOGLE_CLIENT_ID` and `VITE_GOOGLE_CLIENT_ID`; no OAuth client secret belongs in this app.
-2. For email-code fallback, enable 2-Step Verification on the Gmail sender and create a Google **App password**. Set `SMTP_USER` to that Gmail and `SMTP_PASS` to the app password. `SMTP_HOST=smtp.gmail.com` and `SMTP_PORT=465` are the Gmail SMTP settings.
-3. Copy `.env.example` to `.env`. Set `ADMIN_EMAIL` and `VITE_ADMIN_EMAIL` to the same authorized Gmail, and set the Google client ID and optional email settings described above. Keep `SMTP_PASS` server-side; never give it a `VITE_` prefix or commit `.env`.
-4. Run `npm run dev`. The command starts the auth API on port 8787 and Vite on port 5173; Vite proxies `/api` to the API. Check `/api/health`; `googleSignInConfigured` and `emailCodeSignInConfigured` independently report the corresponding server settings.
+1. Copy `.env.example` to `.env`. Set `ADMIN_EMAIL` and `VITE_ADMIN_EMAIL` to the authorized Gmail. Set `ADMIN_PASSWORD` to a strong, unique store password. Keep it server-side: never prefix it with `VITE_` or commit `.env`.
+2. `SMTP_USER` and `SMTP_PASS` are only needed if you separately use the email-code API. Keep `SMTP_PASS` server-side as well.
+3. Run `npm run dev`. The command starts the auth API on port 8787 and Vite on port 5173; Vite proxies `/api` to the API.
 
 ### Deploy to Render
 
-Use the included `render.yaml` Blueprint and provide `ADMIN_EMAIL`, `VITE_ADMIN_EMAIL` (the same authorized Gmail), and the same OAuth web client ID for `GOOGLE_CLIENT_ID` and `VITE_GOOGLE_CLIENT_ID`. In Google Cloud Console, add the deployed Render service URL as an authorized JavaScript origin. For email-code fallback, also set `SMTP_USER` and `SMTP_PASS` (the sender Gmail's app password). Treat `SMTP_PASS` as a secret. Check `/api/health` for `googleSignInConfigured` and `emailCodeSignInConfigured`.
+Use the included `render.yaml` Blueprint and set `ADMIN_EMAIL`, `VITE_ADMIN_EMAIL` (the same authorized Gmail), and a strong `ADMIN_PASSWORD` in the Render environment. The Render `SMTP_PASS` only matters for the optional email-code API.
 
 The server only sends codes to the configured `ADMIN_EMAIL` and never returns a code to the browser. It keeps code hashes in memory and removes codes after successful verification. Local POS data remains device-local; this prototype does not provide server-enforced authorization for the POS data itself.
 
@@ -50,7 +49,7 @@ The server only sends codes to the configured `ADMIN_EMAIL` and never returns a 
 - Sales & Receipts is the transaction register, Activity Log is staff/admin activity, and Inventory has its own stock movement history.
 - Staff list management, reports, settings, and audit activity.
 - Cashier access to POS, their transactions, and shift closeout.
-- Admin sign-in by one-time email code sent to the authorized Gmail.
+- Admin sign-in with the authorized Gmail and server-configured store password.
 - Sign-in persists when the app is closed and reopened, and expires after five minutes without activity.
 - Required cashier name before POS entry, with cashier/admin sign-in events included in the audit log and cashier identity on each transaction.
 - Local browser persistence for menu, inventory, staff, audit entries, and transactions.

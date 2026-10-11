@@ -20,22 +20,10 @@ type HeldOrder = { id: string; label: string; createdAt: string; items: CartItem
 type StockItem = { id: string; name: string; quantity: number; unit: string; low: number }
 type StockMovement = { id: string; date: string; itemId: string; itemName: string; action: 'Restock' | 'Adjustment' | 'Sale' | 'Deleted'; change: number; balance: number; actor: string }
 type Customer = { id: string; name: string; phone: string; email: string; notes: string; active: boolean }
+type AddOn = { id: string; name: string; price: number; active: boolean }
 type StaffMember = { name: string; role: Role; status: 'Active' | 'On leave' }
-type GoogleIdentityApi = {
-  accounts: {
-    id: {
-      initialize: (options: { client_id: string; login_hint?: string; callback: (response: { credential: string }) => void }) => void
-      renderButton: (parent: HTMLElement, options: { theme: 'outline'; size: 'large'; shape: 'rectangular'; text: 'signin_with'; width: number }) => void
-    }
-  }
-}
-
-declare global {
-  interface Window {
-    google?: GoogleIdentityApi
-  }
-}
-
+type GoogleIdentityApi = { accounts: { id: { initialize: (options: { client_id: string; callback: (response: { credential: string }) => void }) => void; prompt: () => void } } }
+declare global { interface Window { google?: GoogleIdentityApi } }
 const categoriesLabels = Object.fromEntries(categories.map((category) => [category.id, category.shortLabel])) as Record<CategoryId, string>
 const sameLocalDay = (date: string, reference: Date) => new Date(date).toDateString() === reference.toDateString()
 const isWithinPeriod = (date: string, start: Date, end: Date) => new Date(date) >= start && new Date(date) <= end
@@ -46,16 +34,13 @@ const periodStart = (reference: Date, range: 'daily' | 'weekly' | 'monthly') => 
   return start
 }
 const currentTimestamp = () => new Date().toLocaleString()
+const dateFieldValue = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
 const authSessionKey = 'ss-auth-session'
 const authSessionTimeoutMs = 5 * 60 * 1000
 const gcashNumber = '09102733236'
 const syncEndpoint = import.meta.env.VITE_SYNC_API_URL?.trim() || ''
-const configuredAdminEmail = import.meta.env.VITE_ADMIN_EMAIL?.trim().toLowerCase() || ''
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() || ''
-const adminCodeRequestUrl = '/api/auth/email-code/request'
-const adminCodeVerifyUrl = '/api/auth/email-code/verify'
 const googleAuthVerifyUrl = '/api/auth/google/verify'
-const directAdminSignInUrl = '/api/auth/admin-direct'
 const loadProducts = (): Product[] => {
   const saved = JSON.parse(localStorage.getItem('ss-products') || 'null') as Product[] | null
   const source = saved || initialProducts
@@ -96,6 +81,10 @@ const initialStaff: StaffMember[] = [
   { name: 'Mia Santos', role: 'Manager', status: 'Active' },
   { name: 'Alex Rivera', role: 'Cashier', status: 'Active' },
   { name: 'Sam Flores', role: 'Cashier', status: 'Active' },
+]
+const initialAddOns: AddOn[] = [
+  { id: 'extra-shot', name: 'Extra shot', price: 10, active: true },
+  { id: 'cream', name: 'Cream', price: 10, active: true },
 ]
 const loadAuthSession = (): AuthSession | null => {
   const saved = localStorage.getItem(authSessionKey)
@@ -140,6 +129,8 @@ function App() {
   const [stockMovements, setStockMovements] = useState<StockMovement[]>(() => JSON.parse(localStorage.getItem('ss-stock-movements') || '[]'))
   const [customers, setCustomers] = useState<Customer[]>(() => JSON.parse(localStorage.getItem('ss-customers') || '[]'))
   const [staff, setStaff] = useState<StaffMember[]>(() => JSON.parse(localStorage.getItem('ss-staff') || 'null') || initialStaff)
+  const [addOns, setAddOns] = useState<AddOn[]>(() => JSON.parse(localStorage.getItem('ss-addons') || 'null') || initialAddOns)
+  const [addOnDraft, setAddOnDraft] = useState<{ id: string | null; name: string; price: string }>({ id: null, name: '', price: '10' })
   const [audit, setAudit] = useState<string[]>(() => JSON.parse(localStorage.getItem('ss-audit') || '[]'))
   const [authSession, setAuthSession] = useState<AuthSession | null>(loadAuthSession)
   const user = authSession?.user || ''
@@ -152,7 +143,9 @@ function App() {
   const syncInFlight = useRef(false)
   const syncQueued = useRef(false)
   const [view, setView] = useState<View>('pos')
-  const [reportRange, setReportRange] = useState<'daily' | 'weekly' | 'monthly'>('daily')
+  const [reportRange, setReportRange] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('daily')
+  const [reportFrom, setReportFrom] = useState(() => dateFieldValue(new Date()))
+  const [reportTo, setReportTo] = useState(() => dateFieldValue(new Date()))
   const [category, setCategory] = useState<CategoryId | 'all'>('all')
   const [productListMode, setProductListMode] = useState<'active' | 'archived'>('active')
   const [search, setSearch] = useState('')
@@ -174,12 +167,10 @@ function App() {
   const [stockEdit, setStockEdit] = useState<StockItem | null>(null)
   const [notification, setNotification] = useState('')
   const [loginName, setLoginName] = useState('')
+  const [adminEmailInput, setAdminEmailInput] = useState('')
+  const [adminPasswordInput, setAdminPasswordInput] = useState('')
   const [loginStage, setLoginStage] = useState<'roles' | 'admin' | 'cashier'>('roles')
-  const [adminEmail, setAdminEmail] = useState(configuredAdminEmail)
-  const [adminCode, setAdminCode] = useState('')
-  const [adminCodeSent, setAdminCodeSent] = useState(false)
   const [adminCodeBusy, setAdminCodeBusy] = useState(false)
-  const googleButtonRef = useRef<HTMLDivElement>(null)
   const [newProductName, setNewProductName] = useState('')
   const [newProductPrice, setNewProductPrice] = useState('60')
   const [newProductCategory, setNewProductCategory] = useState<CategoryId>('coffee')
@@ -200,8 +191,9 @@ function App() {
     localStorage.setItem('ss-stock-movements', JSON.stringify(stockMovements))
     localStorage.setItem('ss-customers', JSON.stringify(customers))
     localStorage.setItem('ss-staff', JSON.stringify(staff))
+    localStorage.setItem('ss-addons', JSON.stringify(addOns))
     localStorage.setItem('ss-audit', JSON.stringify(audit))
-  }, [products, transactions, heldOrders, stock, stockMovements, customers, staff, audit])
+  }, [products, transactions, heldOrders, stock, stockMovements, customers, staff, addOns, audit])
 
   useEffect(() => {
     if (!user) return
@@ -263,7 +255,11 @@ function App() {
   const todaySales = todayTransactions.reduce((sum, item) => sum + item.total, 0)
   const visibleTransactions = role === 'Manager' ? transactions : transactions.filter((item) => item.cashier === user)
   const visibleTodayTransactions = visibleTransactions.filter((item) => sameLocalDay(item.date, now))
-  const periodTransactions = visibleTransactions.filter((item) => isWithinPeriod(item.date, periodStart(now, reportRange), now))
+  const selectedPeriodStart = reportRange === 'custom' ? new Date(`${reportFrom}T00:00:00`) : periodStart(now, reportRange)
+  const selectedPeriodEnd = reportRange === 'custom' ? new Date(`${reportTo}T23:59:59.999`) : now
+  const isValidReportPeriod = Number.isFinite(selectedPeriodStart.getTime()) && Number.isFinite(selectedPeriodEnd.getTime()) && selectedPeriodStart <= selectedPeriodEnd
+  const periodTransactions = visibleTransactions.filter((item) => isValidReportPeriod && isWithinPeriod(item.date, selectedPeriodStart, selectedPeriodEnd))
+  const reportPeriodLabel = reportRange === 'custom' ? `${reportFrom} to ${reportTo}` : reportRange
   const periodSales = periodTransactions.reduce((sum, item) => sum + item.total, 0)
   const lowStock = stock.filter((item) => item.quantity <= item.low)
   const snapshotFingerprint = JSON.stringify({ products, transactions, stock, stockMovements, customers, staff, audit })
@@ -271,6 +267,7 @@ function App() {
   const syncLabel = !isOnline ? 'Offline · saved locally' : !syncEndpoint ? 'Online · device only' : syncStatus === 'syncing' ? 'Syncing…' : snapshotIsSynced || syncStatus === 'synced' ? 'Synced' : syncStatus === 'error' ? 'Sync failed · retry' : 'Waiting to sync'
   const syncTitle = lastSyncedAt ? `${syncLabel}. Last sync ${new Date(lastSyncedAt).toLocaleString()}` : `${syncLabel}. Configure VITE_SYNC_API_URL for cloud sync.`
   const selectedCustomer = customers.find((customer) => customer.id === currentCustomerId && customer.active)
+  const selectedAddOnTotal = addons.reduce((sum, name) => sum + (addOns.find((item) => item.name === name)?.price || 0), 0)
   const appendStockMovement = (item: StockItem, change: number, action: StockMovement['action']) => setStockMovements((items) => [{
     id: `move-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     date: new Date().toISOString(),
@@ -342,7 +339,13 @@ function App() {
     const clearPrintMode = () => document.body.classList.remove('receipt-print-mode')
     window.addEventListener('afterprint', clearPrintMode, { once: true })
     document.body.classList.add('receipt-print-mode')
-    window.print()
+    window.requestAnimationFrame(() => window.print())
+  }
+  const printReport = () => {
+    const clearPrintMode = () => document.body.classList.remove('report-print-mode')
+    window.addEventListener('afterprint', clearPrintMode, { once: true })
+    document.body.classList.add('report-print-mode')
+    window.requestAnimationFrame(() => window.print())
   }
 
   const startOrder = (item: Product) => {
@@ -355,7 +358,7 @@ function App() {
   const addToCart = () => {
     if (!selected) return
     const variant = selected.variants[variantIndex]
-    const extra = addons.length * 10
+    const extra = addons.reduce((sum, name) => sum + (addOns.find((item) => item.name === name)?.price || 0), 0)
     const key = `${selected.id}-${variant.name}-${sugar}-${addons.join(',')}`
     setCart((items) => {
       const existing = items.find((item) => item.key === key)
@@ -459,6 +462,24 @@ function App() {
     setCustomerEdit(null)
     setModal(null)
   }
+  const saveAddOn = () => {
+    const name = addOnDraft.name.trim()
+    const price = Number(addOnDraft.price)
+    if (!name || !Number.isFinite(price) || price < 0) return notify('Enter an add-on name and a valid non-negative price.')
+    if (addOns.some((item) => item.name.toLowerCase() === name.toLowerCase() && item.id !== addOnDraft.id)) return notify('An add-on with that name already exists.')
+    if (addOnDraft.id) {
+      setAddOns((items) => items.map((item) => item.id === addOnDraft.id ? { ...item, name, price } : item))
+      addAudit(`Updated add-on ${name}`)
+    } else {
+      setAddOns((items) => [...items, { id: `addon-${Date.now()}`, name, price, active: true }])
+      addAudit(`Added add-on ${name}`)
+    }
+    setAddOnDraft({ id: null, name: '', price: '10' })
+  }
+  const deleteAddOn = (item: AddOn) => {
+    setAddOns((items) => items.filter((entry) => entry.id !== item.id))
+    addAudit(`Deleted add-on ${item.name}`)
+  }
   const recordSignIn = (name: string, selectedRole: Role) => {
     const session = { user: name, role: selectedRole, lastActivityAt: Date.now() }
     localStorage.setItem(authSessionKey, JSON.stringify(session))
@@ -467,141 +488,65 @@ function App() {
     setModal(null)
     setView('pos')
   }
-  const requestAdminCode = async () => {
-    const email = adminEmail.trim().toLowerCase()
-    if (!/^[-a-z0-9._%+]+@gmail\.com$/.test(email)) return notify('Use the authorized Gmail address.')
-    setAdminCodeBusy(true)
-    try {
-      const response = await fetch(adminCodeRequestUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      })
-      const result = await response.json() as { error?: unknown }
-      if (!response.ok) {
-        return notify(typeof result.error === 'string' ? result.error : `Could not send a sign-in code (HTTP ${response.status}).`)
-      }
-      setAdminEmail(email)
-      setAdminCode('')
-      setAdminCodeSent(true)
-      notify('Sign-in code sent. Check your Gmail inbox.')
-    } catch {
-      notify('Could not contact the sign-in service. Check your connection and try again.')
-    } finally {
-      setAdminCodeBusy(false)
-    }
-  }
-  const submitDirectAdminSignIn = async (emailOverride?: string) => {
-    const email = (emailOverride || adminEmail).trim().toLowerCase()
-    if (!email) return notify('Enter your authorized admin Gmail.')
-    if (!/^[-a-z0-9._%+]+@gmail\.com$/.test(email)) return notify('Enter a valid Gmail address.')
-    setAdminCodeBusy(true)
-    try {
-      const response = await fetch(directAdminSignInUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      })
-      const result = await response.json() as { error?: unknown; email?: unknown }
-      if (!response.ok) {
-        return notify(typeof result.error === 'string' ? result.error : `Could not sign in (HTTP ${response.status}).`)
-      }
-      setAdminEmail(email)
-      recordSignIn(email, 'Manager')
-      notify(`Signed in as Manager (${email})`)
-    } catch {
-      notify('Could not contact the sign-in service. Check your connection and try again.')
-    } finally {
-      setAdminCodeBusy(false)
-    }
-  }
   const verifyGoogleAdminCredential = async (credential: string) => {
     setAdminCodeBusy(true)
     try {
-      const response = await fetch(googleAuthVerifyUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential }),
-      })
+      const response = await fetch(googleAuthVerifyUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential }) })
       const result = await response.json() as { email?: unknown; email_verified?: unknown; error?: unknown }
-      if (!response.ok) {
-        return notify(typeof result.error === 'string' ? result.error : `Google sign-in could not be verified (HTTP ${response.status}).`)
+      if (!response.ok) return notify(typeof result.error === 'string' ? result.error : 'Google sign-in could not be verified.')
+      if (typeof result.email === 'string' && result.email_verified === true) recordSignIn(result.email.trim().toLowerCase(), 'Manager')
+    } catch { notify('Could not contact the Google sign-in service. Check your connection and try again.') }
+    finally { setAdminCodeBusy(false) }
+  }
+  const signInAdminWithPassword = async () => {
+    const email = adminEmailInput.trim().toLowerCase()
+    if (!email || !adminPasswordInput) return notify('Enter your Gmail and password.')
+    setAdminCodeBusy(true)
+    try {
+      const response = await fetch('/api/auth/password/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: adminPasswordInput }) })
+      const result = await response.json() as { email?: unknown; email_verified?: unknown; error?: unknown }
+      if (!response.ok) return notify(typeof result.error === 'string' ? result.error : 'Gmail or password is incorrect.')
+      if (typeof result.email === 'string' && result.email_verified === true) {
+        setAdminPasswordInput('')
+        recordSignIn(result.email, 'Manager')
       }
-      if (typeof result.email !== 'string' || result.email_verified !== true) {
-        return notify('Google did not verify this Gmail account.')
-      }
-      recordSignIn(result.email.trim().toLowerCase(), 'Manager')
-    } catch {
-      notify('Could not contact the Google sign-in service. Check your connection and try again.')
-    } finally {
-      setAdminCodeBusy(false)
-    }
+    } catch { notify('Could not contact the sign-in service. Check your connection and try again.') }
+    finally { setAdminCodeBusy(false) }
   }
   useEffect(() => {
-    const button = googleButtonRef.current
-    if (modal !== 'login' || loginStage !== 'admin' || !googleClientId || !button) return
-    const renderButton = () => {
-      if (!window.google || !googleButtonRef.current) return
-      const measured = Math.floor(googleButtonRef.current.getBoundingClientRect().width)
-      const buttonWidth = Math.max(240, Math.min(340, measured || 280))
+    if (modal !== 'login' || loginStage !== 'admin' || !googleClientId) return
+    const initializeGoogleSignIn = () => {
+      if (!window.google) return
       window.google.accounts.id.initialize({
         client_id: googleClientId,
-        login_hint: configuredAdminEmail || undefined,
         callback: (response) => void verifyGoogleAdminCredential(response.credential),
-      })
-      window.google.accounts.id.renderButton(googleButtonRef.current, {
-        theme: 'outline',
-        size: 'large',
-        shape: 'rectangular',
-        text: 'signin_with',
-        width: buttonWidth,
       })
     }
     const scriptId = 'google-identity-services'
     const existingScript = document.getElementById(scriptId) as HTMLScriptElement | null
     if (window.google) {
-      renderButton()
+      initializeGoogleSignIn()
       return
-    }
-    if (existingScript) {
-      existingScript.addEventListener('load', renderButton, { once: true })
-      existingScript.addEventListener('error', () => notify('Google sign-in could not load. Check your connection and try again.'), { once: true })
-      return () => existingScript.removeEventListener('load', renderButton)
+    } else {
+      if (existingScript) {
+        existingScript.addEventListener('load', initializeGoogleSignIn, { once: true })
+        existingScript.addEventListener('error', () => notify('Google sign-in could not load. Check your connection and try again.'), { once: true })
+        return () => existingScript.removeEventListener('load', initializeGoogleSignIn)
+      }
     }
     const script = document.createElement('script')
     script.id = scriptId
     script.src = 'https://accounts.google.com/gsi/client'
     script.async = true
     script.defer = true
-    script.onload = renderButton
+    script.id = scriptId
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.defer = true
+    script.onload = initializeGoogleSignIn
     script.onerror = () => notify('Google sign-in could not load. Check your connection and try again.')
     document.head.appendChild(script)
-  }, [modal, loginStage, adminCodeSent])
-  const verifyAdminCode = async () => {
-    const email = adminEmail.trim().toLowerCase()
-    const code = adminCode.trim()
-    if (!/^\d{6}$/.test(code)) return notify('Enter the 6-digit code from your email.')
-    setAdminCodeBusy(true)
-    try {
-      const response = await fetch(adminCodeVerifyUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code }),
-      })
-      const result = await response.json() as { email?: unknown; email_verified?: unknown; error?: unknown }
-      if (!response.ok) {
-        return notify(typeof result.error === 'string' ? result.error : `Could not verify the code (HTTP ${response.status}).`)
-      }
-      if (result.email !== email || result.email_verified !== true) {
-        return notify('The sign-in service returned an invalid verification result.')
-      }
-      recordSignIn(email, 'Manager')
-    } catch {
-      notify('Could not contact the sign-in service. Check your connection and try again.')
-    } finally {
-      setAdminCodeBusy(false)
-    }
-  }
+  }, [modal, loginStage, adminEmailInput])
   const submitCashierSignIn = () => {
     const name = loginName.trim()
     if (name.length < 2) return notify('Enter the cashier’s name before continuing.')
@@ -638,21 +583,13 @@ function App() {
         <button className="role-choice" onClick={() => setLoginStage('admin')}><ShieldCheck size={20} /><span><b>Admin sign in</b><small>Single authorized Gmail account</small></span><ArrowRight size={16} /></button>
         <button className="role-choice" onClick={() => { setLoginName(''); setLoginStage('cashier') }}><UserRound size={20} /><span><b>Cashier sign in</b><small>Enter your name for the shift log</small></span><ArrowRight size={16} /></button>
       </>}
-      {loginStage === 'admin' && <><button className="back-link" onClick={() => { setLoginStage('roles'); setAdminCodeSent(false); setAdminCode('') }}><ArrowRight size={14} /> Back to roles</button><h2>Admin sign in</h2><p>{adminCodeSent ? `Enter the 6-digit code sent to ${adminEmail}, or sign in directly.` : 'Sign in directly with your authorized Gmail or Google account.'}</p>
-        {googleClientId && <div className="google-login-section"><div className="google-signin-button" ref={googleButtonRef} /><div className="login-divider"><span>OR SIGN IN WITH GMAIL</span></div></div>}
-        {adminCodeSent ? <>
-          <label className="form-label">Email verification code<input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={adminCode} onChange={(event) => setAdminCode(event.target.value.replace(/\D/g, '').slice(0, 6))} onKeyDown={(event) => { if (event.key === 'Enter') void verifyAdminCode() }} placeholder="6-digit code" /></label>
-          <button className="primary-button full-width" disabled={adminCodeBusy} onClick={() => void verifyAdminCode()}>{adminCodeBusy ? 'Verifying…' : 'Verify code and sign in'} <ArrowRight size={15} /></button>
-          <div className="email-code-actions"><button type="button" disabled={adminCodeBusy} onClick={() => void submitDirectAdminSignIn(adminEmail)}>Sign in directly instead</button><button type="button" disabled={adminCodeBusy} onClick={() => void requestAdminCode()}>Resend code</button><button type="button" disabled={adminCodeBusy} onClick={() => { setAdminCodeSent(false); setAdminCode('') }}>Change email</button></div>
-          <small className="demo-note">If your SMTP email did not arrive or is unavailable, use "Sign in directly instead" above.</small>
-        </> : <>
-          {configuredAdminEmail && <div className="recommended-account"><span>Authorized admin Gmail</span><button type="button" onClick={() => { setAdminEmail(configuredAdminEmail); void submitDirectAdminSignIn(configuredAdminEmail) }}>{configuredAdminEmail}<b>Sign in now</b></button></div>}
-          <label className="form-label">Admin Gmail<input type="email" autoComplete="email" value={adminEmail} onChange={(event) => setAdminEmail(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void submitDirectAdminSignIn() }} placeholder={configuredAdminEmail || 'owner@gmail.com'} /></label>
-          <button className="primary-button full-width" disabled={adminCodeBusy || !adminEmail.trim()} onClick={() => void submitDirectAdminSignIn()}>{adminCodeBusy ? 'Signing in…' : 'Sign in as Admin'} <ArrowRight size={15} /></button>
-          <div className="email-code-actions" style={{ justifyContent: 'center' }}><button type="button" disabled={adminCodeBusy} onClick={() => void requestAdminCode()}>Send one-time email code instead</button></div>
-          <small className="demo-note">Direct Gmail sign-in logs in the store administrator immediately without requiring an SMTP email code.</small>
-        </>}
-      </>}
+      {loginStage === 'admin' && <><button className="back-link" onClick={() => setLoginStage('roles')}><ArrowRight size={14} /> Back to roles</button><h2>Admin sign in</h2><p>Use your authorized Gmail and store password.</p>
+      <div className="login-form" aria-busy={adminCodeBusy}>
+        <label className="form-label admin-email-label">Admin Gmail<input type="email" autoComplete="username" value={adminEmailInput} onChange={(event) => setAdminEmailInput(event.target.value)} placeholder="Enter admin Gmail" /></label>
+        <label className="form-label">Password<input type="password" autoComplete="current-password" value={adminPasswordInput} onChange={(event) => setAdminPasswordInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void signInAdminWithPassword() }} placeholder="Enter your store password" /></label>
+        <button className="primary-button full-width admin-signin-button" disabled={adminCodeBusy} onClick={() => void signInAdminWithPassword()}>Sign in as Admin <ArrowRight size={17} /></button>
+        <small className="admin-signin-note">Use your store password. Do not enter your Google account password.</small>
+      </div></>}
       {loginStage === 'cashier' && <><button className="back-link" onClick={() => setLoginStage('roles')}><ArrowRight size={14} /> Back to roles</button><h2>Cashier sign in</h2><p>Your name will be attached to orders and shift activity.</p>
         <label className="form-label">Cashier name<input autoComplete="name" value={loginName} onChange={(event) => setLoginName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submitCashierSignIn() }} placeholder="Enter your full name" /></label>
         <button className="primary-button full-width" onClick={submitCashierSignIn}>Continue to POS <ArrowRight size={15} /></button>
@@ -712,6 +649,7 @@ function App() {
             <div className="menu-product-grid">{products.filter((item) => item.archived === (productListMode === 'archived') && (category === 'all' || item.category === category) && item.name.toLowerCase().includes(search.toLowerCase())).map((item) => <MenuProductCard key={item.id} product={item} onEdit={() => setEditProduct(item)} onToggle={() => { setProducts((list) => list.map((entry) => entry.id === item.id ? { ...entry, active: !entry.active } : entry)); addAudit(`Changed availability for ${item.name}`) }} onArchive={() => { setProducts((list) => list.map((entry) => entry.id === item.id ? { ...entry, archived: !entry.archived } : entry)); addAudit(`${item.archived ? 'Restored' : 'Archived'} product ${item.name}`) }} />)}</div>
             {!products.some((item) => item.archived === (productListMode === 'archived') && (category === 'all' || item.category === category) && item.name.toLowerCase().includes(search.toLowerCase())) && <div className="menu-empty"><Coffee size={24} /><b>No products here yet</b><span>Adjust the filters or add a menu item.</span></div>}
           </section>
+          <section className="content-panel addon-settings-panel"><div className="panel-heading"><div><h2>POS add-ons</h2><span>Create and manage extras and their prices. Changes appear in product customization.</span></div></div><div className="addon-manager"><div className="addon-editor"><label className="form-label">Add-on name<input value={addOnDraft.name} onChange={(event) => setAddOnDraft((draft) => ({ ...draft, name: event.target.value }))} placeholder="e.g. Oat milk" /></label><label className="form-label">Price (PHP)<input type="number" min="0" step="0.01" value={addOnDraft.price} onChange={(event) => setAddOnDraft((draft) => ({ ...draft, price: event.target.value }))} /></label><div className="addon-editor-actions"><button className="primary-button" onClick={saveAddOn}>{addOnDraft.id ? 'Save add-on' : 'Add add-on'} <Check size={14} /></button>{addOnDraft.id && <button className="outline-button" onClick={() => setAddOnDraft({ id: null, name: '', price: '10' })}>Cancel</button>}</div></div><div className="addon-list">{addOns.map((item) => <div className="addon-row" key={item.id}><span><b>{item.name}</b><small>{money(item.price)} per item - {item.active ? 'Available' : 'Hidden from POS'}</small></span><div><button className="table-action" onClick={() => setAddOns((items) => items.map((entry) => entry.id === item.id ? { ...entry, active: !entry.active } : entry))}>{item.active ? 'Hide' : 'Show'}</button><button className="table-action" onClick={() => setAddOnDraft({ id: item.id, name: item.name, price: String(item.price) })}>Edit</button><button className="icon-button" aria-label="Delete add-on" onClick={() => deleteAddOn(item)}><Trash2 size={14} /></button></div></div>)}{addOns.length === 0 && <div className="empty-state">No add-ons yet. Add one above to offer it at checkout.</div>}</div></div></section>
           {editProduct && <ProductEditor product={editProduct} onClose={() => setEditProduct(null)} onSave={(next) => { setProducts((list) => list.map((item) => item.id === next.id ? next : item)); addAudit(`Updated product ${next.name}`); setEditProduct(null) }} />}
         </>}
 
@@ -723,15 +661,15 @@ function App() {
 
         {view === 'staff' && <><PageTitle eyebrow="YOUR LITTLE DREAM TEAM" title="Staff" subtitle="People make the place. Manage your team here." action={<button className="primary-button" onClick={() => setModal('staff')}><Plus size={16} /> Add team member</button>} /><div className="metric-grid"><Metric label="Team members" value={String(staff.length).padStart(2, '0')} change="Across all roles" icon={Users} tone="green" /><Metric label="On shift" value={String(staff.filter((item) => item.status === 'Active').length).padStart(2, '0')} change="Currently active" icon={Activity} tone="gold" /></div><section className="content-panel table-panel"><div className="panel-heading"><div><h2>Your team</h2><span>Roles and account status</span></div></div><div className="table-scroll"><table><thead><tr><th>TEAM MEMBER</th><th>ROLE</th><th>STATUS</th><th>ACCESS</th><th></th></tr></thead><tbody>{staff.map((member, index) => <tr key={`${member.name}-${index}`}><td><span className="person-cell"><span className="person-avatar">{member.name.charAt(0)}</span><b>{member.name}</b></span></td><td>{member.role}</td><td><span className="status-pill in-stock">{member.status}</span></td><td><span className="role-access">{member.role === 'Manager' ? 'Full access' : 'POS & reports'}</span></td><td><button className="icon-button row-action" aria-label={`Remove ${member.name}`} onClick={() => { setStaff((items) => items.filter((_, i) => i !== index)); addAudit(`Removed staff member ${member.name}`) }}><Trash2 size={15} /></button></td></tr>)}</tbody></table></div></section><div className="note-banner"><ShieldCheck size={16} /><span>Staff accounts in this demo are local only. Connect an authentication provider before using this app in a live store.</span></div></>}
 
-        {view === 'activity' && <><PageTitle eyebrow="SEPARATE OPERATIONAL HISTORY" title="Activity log" subtitle="Staff actions and inventory movements are separate from customer sales." /><div className="dashboard-grid"><section className="content-panel"><div className="panel-heading"><div><h2>Staff & store audit</h2><span>Sign-ins, menu edits, and admin actions.</span></div></div><AuditList audit={audit} /></section><section className="content-panel"><div className="panel-heading"><div><h2>Inventory movements</h2><span>Stock changes and sale deductions.</span></div></div><StockMovementTable movements={stockMovements.slice(0, 12)} /></section></div><section className="content-panel table-panel recent-panel"><div className="panel-heading"><div><h2>Sales stay separate</h2><span>Customer purchases and receipts are maintained in the sales register.</span></div><button className="tiny-link" onClick={() => setView('orders')}>Open sales <ArrowRight size={13} /></button></div></section></>}
+        {view === 'activity' && <><PageTitle eyebrow="SEPARATE OPERATIONAL HISTORY" title="Activity log" subtitle="Staff actions and inventory movements are separate from customer sales." /><div className="dashboard-grid"><section className="content-panel"><div className="panel-heading"><div><h2>Audit log</h2><span>Recent changes made in this store.</span></div></div><AuditList audit={audit} /></section><section className="content-panel"><div className="panel-heading"><div><h2>Inventory movements</h2><span>Stock changes and sale deductions.</span></div></div><StockMovementTable movements={stockMovements.slice(0, 12)} /></section></div><section className="content-panel table-panel recent-panel"><div className="panel-heading"><div><h2>Sales stay separate</h2><span>Customer purchases and receipts are maintained in the sales register.</span></div><button className="tiny-link" onClick={() => setView('orders')}>Open sales <ArrowRight size={13} /></button></div></section></>}
 
-        {view === 'reports' && <><PageTitle eyebrow="NUMBERS WITH A LITTLE SPARKLE" title={role === 'Manager' ? 'Reports' : 'Shift closeout'} subtitle={role === 'Manager' ? 'A clearer look at how your shop is doing.' : 'Your completed sales for this shift.'} action={<button className="outline-button" onClick={() => window.print()}><Printer size={16} /> Print report</button>} /><div className="report-filter">{(['daily', 'weekly', 'monthly'] as const).filter((range) => role === 'Manager' || range === 'daily').map((range) => <button className={`filter-chip${reportRange === range ? ' selected' : ''}`} key={range} onClick={() => setReportRange(range)}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>)}<span>{role === 'Manager' ? `All-time transactions: ${transactions.length}` : `Your transactions: ${visibleTransactions.length}`}</span></div><div className="metric-grid"><Metric label={role === 'Manager' ? 'Gross sales' : 'Your cash out'} value={money(periodSales)} change={`${reportRange} · before discounts`} icon={Wallet} tone="green" />{role === 'Manager' && <Metric label="Discounts given" value={money(periodTransactions.reduce((sum, item) => sum + item.discount, 0))} change={`Across ${reportRange} period`} icon={Tag} tone="gold" />}<Metric label="Completed orders" value={String(periodTransactions.length)} change={`Across ${reportRange} period`} icon={ShoppingBag} tone="pink" /><Metric label="Avg. order value" value={money(periodTransactions.length ? periodSales / periodTransactions.length : 0)} change={`Across ${reportRange} period`} icon={BarChart3} tone="brown" /></div>{role === 'Manager' ? <><section className="content-panel sales-panel report-chart"><div className="panel-heading"><div><h2>Revenue trend</h2><span>Sales from the last 7 days</span></div></div><SalesChart transactions={transactions} now={now} /></section><div className="report-chart-grid"><CategorySalesChart transactions={periodTransactions} /><PaymentMixChart transactions={periodTransactions} /><HourlyOrdersChart transactions={periodTransactions} /><section className="content-panel report-graph-panel"><div className="panel-heading"><div><h2>Product performance</h2><span>Best-selling drinks in this period</span></div></div><TopProducts transactions={periodTransactions} /></section></div></> : <section className="content-panel table-panel"><div className="panel-heading"><div><h2>Your completed sales</h2><span>Transactions linked to your cashier account.</span></div></div><TransactionTable transactions={periodTransactions} onReceipt={setReceipt} /></section>}</>}
+        {view === 'reports' && <><PageTitle eyebrow="NUMBERS WITH A LITTLE SPARKLE" title={role === 'Manager' ? 'Reports' : 'Shift closeout'} subtitle={role === 'Manager' ? 'A clearer look at how your shop is doing.' : 'Your completed sales for this shift.'} action={<button className="outline-button" onClick={printReport}><Printer size={16} /> Print report</button>} /><div className="report-filter">{(["daily", "weekly", "monthly", "custom"] as const).filter((range) => role === "Manager" || range === "daily" || range === "custom").map((range) => <button className={`filter-chip${reportRange === range ? " selected" : ""}`} key={range} onClick={() => setReportRange(range)}>{range === "custom" ? "Custom dates" : range.charAt(0).toUpperCase() + range.slice(1)}</button>)}{reportRange === "custom" && <div className="report-date-range"><label>From<input type="date" value={reportFrom} max={reportTo} onChange={(event) => setReportFrom(event.target.value)} /></label><label>To<input type="date" value={reportTo} min={reportFrom} onChange={(event) => setReportTo(event.target.value)} /></label></div>}<span>{periodTransactions.length} {periodTransactions.length === 1 ? "record" : "records"}</span></div><div className="metric-grid"><Metric label={role === 'Manager' ? 'Gross sales' : 'Your cash out'} value={money(periodSales)} change={`${reportRange} · before discounts`} icon={Wallet} tone="green" />{role === 'Manager' && <Metric label="Discounts given" value={money(periodTransactions.reduce((sum, item) => sum + item.discount, 0))} change={`Across ${reportPeriodLabel}`} icon={Tag} tone="gold" />}<Metric label="Completed orders" value={String(periodTransactions.length)} change={reportRange === "custom" ? `Across ${reportPeriodLabel}` : `Across ${reportRange} period`} icon={ShoppingBag} tone="pink" /><Metric label="Avg. order value" value={money(periodTransactions.length ? periodSales / periodTransactions.length : 0)} change={reportRange === "custom" ? `Across ${reportPeriodLabel}` : `Across ${reportRange} period`} icon={BarChart3} tone="brown" /></div>{role === 'Manager' ? <><section className="content-panel sales-panel report-chart"><div className="panel-heading"><div><h2>Revenue trend</h2><span>Sales across the selected dates</span></div></div><SalesChart transactions={periodTransactions} start={selectedPeriodStart} end={selectedPeriodEnd} /></section><div className="report-chart-grid"><CategorySalesChart transactions={periodTransactions} /><PaymentMixChart transactions={periodTransactions} /><HourlyOrdersChart transactions={periodTransactions} /><section className="content-panel report-graph-panel"><div className="panel-heading"><div><h2>Product performance</h2><span>Best-selling drinks in this period</span></div></div><TopProducts transactions={periodTransactions} /></section></div></> : <section className="content-panel table-panel"><div className="panel-heading"><div><h2>Your completed sales</h2><span>Transactions linked to your cashier account.</span></div></div><TransactionTable transactions={periodTransactions} onReceipt={setReceipt} /></section>}</>}
 
-        {view === 'settings' && <><PageTitle eyebrow="THE LITTLE DETAILS" title="Store settings" subtitle="Make this space feel like your shop." /><section className="content-panel settings-panel"><div className="settings-section"><div><h2>Store profile</h2><span>What customers see on their receipt.</span></div><div className="settings-fields"><label>Store name<input defaultValue="Shots & Sparkles" /></label><label>Social handle<input defaultValue="@shotsandsparkles" /></label><label>Contact number<input defaultValue="[redacted-phone]" /></label><button className="primary-button" onClick={() => notify('Store profile saved.')}>Save changes <Check size={15} /></button></div></div><div className="settings-section"><div><h2>Sales & tax</h2><span>Tax is calculated on each order.</span></div><div className="setting-toggle"><span><b>VAT</b><small>12% tax applied at checkout.</small></span><span className="toggle enabled">ON</span></div></div><div className="settings-section"><div><h2>Session security</h2><span>Automatic sign-out for inactive sessions.</span></div><div className="setting-toggle"><span><b>Session timeout</b><small>Signs out after 5 minutes without activity, even if you close the app.</small></span><span className="toggle enabled">5 MIN</span></div></div><div className="settings-section"><div><h2>Audit log</h2><span>Recent changes made in this store.</span></div><AuditList audit={audit} /></div><div className="note-banner"><ShieldCheck size={16} /><span>This client-only demo stores records in this browser. For real authentication, staff controls, and secure backups, connect a server before opening your store.</span></div></section></>}
+        {view === 'settings' && <><PageTitle eyebrow="THE LITTLE DETAILS" title="Store settings" subtitle="Make this space feel like your shop." /><section className="content-panel settings-panel"><div className="settings-section"><div><h2>Store profile</h2><span>What customers see on their receipt.</span></div><div className="settings-fields"><label>Store name<input defaultValue="Shots & Sparkles" /></label><label>Social handle<input defaultValue="@shotsandsparkles" /></label><label>Contact number<input defaultValue="[redacted-phone]" /></label><button className="primary-button" onClick={() => notify('Store profile saved.')}>Save changes <Check size={15} /></button></div></div><div className="settings-section"><div><h2>Sales & tax</h2><span>Tax is calculated on each order.</span></div><div className="setting-toggle"><span><b>VAT</b><small>12% tax applied at checkout.</small></span><span className="toggle enabled">ON</span></div></div><div className="settings-section"><div><h2>Session security</h2><span>Automatic sign-out for inactive sessions.</span></div><div className="setting-toggle"><span><b>Session timeout</b><small>Signs out after 5 minutes without activity, even if you close the app.</small></span><span className="toggle enabled">5 MIN</span></div></div><div className="note-banner"><ShieldCheck size={16} /><span>This client-only demo stores records in this browser. For real authentication, staff controls, and secure backups, connect a server before opening your store.</span></div></section></>}
       </div>
     </main>
 
-    {modal === 'product' && selected && <div className="overlay" onClick={() => setModal(null)}><div className="dialog customize-dialog" onClick={(event) => event.stopPropagation()}><button className="icon-button dialog-close" onClick={() => setModal(null)} aria-label="Close"><X size={18} /></button><span className={`customize-art color-${selected.category}`}><div className="drink-illustration"><span className="drink-lid" /><span className="drink-straw" /><span className="drink-liquid" /><span className="drink-label">S<span>&</span>S</span></div></span><div className="customize-heading"><span className="eyebrow">{categoriesLabels[selected.category]}</span><h2>{selected.name}</h2><p>Make it just the way you like it.</p></div><div className="option-block"><div className="option-title"><b>Choose your size</b><span>Required</span></div><div className="variant-options">{selected.variants.map((variant, index) => <button className={variantIndex === index ? 'picked' : ''} key={variant.name} onClick={() => setVariantIndex(index)}><span>{variant.name}</span><b>{money(variant.price + addons.length * 10)}</b></button>)}</div></div>{selected.category !== 'dessert' && <><div className="option-block"><div className="option-title"><b>Sugar level</b><span>{sugar}</span></div><div className="sugar-options">{['0%', '25%', '50%', '75%', '100%'].map((level) => <button className={sugar === level ? 'picked' : ''} key={level} onClick={() => setSugar(level)}>{level}</button>)}</div></div><div className="option-block"><div className="option-title"><b>A little extra</b><span>₱10 each</span></div><div className="addon-options">{['Extra shot', 'Cream'].map((addon) => <button className={addons.includes(addon) ? 'picked' : ''} key={addon} onClick={() => setAddons((items) => items.includes(addon) ? items.filter((item) => item !== addon) : [...items, addon])}><span className="checkbox">{addons.includes(addon) && <Check size={12} />}</span>{addon}</button>)}</div></div></>}<button className="checkout-button add-button" onClick={addToCart}><span><Plus size={17} /> Add to order</span><b>{money(selected.variants[variantIndex].price + addons.length * 10)}</b></button></div></div>}
+    {modal === 'product' && selected && <div className="overlay" onClick={() => setModal(null)}><div className="dialog customize-dialog" onClick={(event) => event.stopPropagation()}><button className="icon-button dialog-close" onClick={() => setModal(null)} aria-label="Close"><X size={18} /></button><span className={`customize-art color-${selected.category}`}><div className="drink-illustration"><span className="drink-lid" /><span className="drink-straw" /><span className="drink-liquid" /><span className="drink-label">S<span>&</span>S</span></div></span><div className="customize-heading"><span className="eyebrow">{categoriesLabels[selected.category]}</span><h2>{selected.name}</h2><p>Make it just the way you like it.</p></div><div className="option-block"><div className="option-title"><b>Choose your size</b><span>Required</span></div><div className="variant-options">{selected.variants.map((variant, index) => <button className={variantIndex === index ? 'picked' : ''} key={variant.name} onClick={() => setVariantIndex(index)}><span>{variant.name}</span><b>{money(variant.price + selectedAddOnTotal)}</b></button>)}</div></div>{selected.category !== 'dessert' && <><div className="option-block"><div className="option-title"><b>Sugar level</b><span>{sugar}</span></div><div className="sugar-options">{['0%', '25%', '50%', '75%', '100%'].map((level) => <button className={sugar === level ? 'picked' : ''} key={level} onClick={() => setSugar(level)}>{level}</button>)}</div></div><div className="option-block"><div className="option-title"><b>A little extra</b><span>Optional</span></div><div className="addon-options">{addOns.filter((item) => item.active).map((addon) => <button className={addons.includes(addon.name) ? 'picked' : ''} key={addon.id} onClick={() => setAddons((items) => items.includes(addon.name) ? items.filter((item) => item !== addon.name) : [...items, addon.name])}><span className="checkbox">{addons.includes(addon.name) && <Check size={12} />}</span>{addon.name} <b>+{money(addon.price)}</b></button>)}</div></div></>}<button className="checkout-button add-button" onClick={addToCart}><span><Plus size={17} /> Add to order</span><b>{money(selected.variants[variantIndex].price + selectedAddOnTotal)}</b></button></div></div>}
 
     {modal === 'held-orders' && <div className="overlay" onClick={() => setModal(null)}><div className="dialog compact-dialog held-orders-dialog" onClick={(event) => event.stopPropagation()}><button className="icon-button dialog-close" onClick={() => setModal(null)} aria-label="Close"><X size={18} /></button><span className="eyebrow">READY WHEN YOU ARE</span><h2>Parked orders</h2><p className="dialog-description">Save a spot in the queue, then pick up right where you left off.</p>{heldOrders.length ? <div className="held-order-list">{heldOrders.map((order) => <div className="held-order-card" key={order.id}><div className="held-order-info"><b>{order.label}</b><span>{order.items.reduce((quantity, item) => quantity + item.quantity, 0)} items · {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{order.customerId ? ` · ${customers.find((customer) => customer.id === order.customerId)?.name || 'Customer'}` : ''}</span><strong>{money(Math.max(0, order.items.reduce((sum, item) => sum + item.price * item.quantity, 0) * 1.12 - order.discount))}</strong></div><button className="primary-button" onClick={() => resumeHeldOrder(order)}>Resume <ArrowRight size={14} /></button></div>)}</div> : <div className="held-orders-empty"><Pause size={22} /><b>No parked orders yet</b><span>Park an order if a customer needs a little more time.</span></div>}</div></div>}
 
@@ -755,11 +693,21 @@ function App() {
 function BanknoteIcon() { return <Wallet size={17} /> }
 function PageTitle({ eyebrow, title, subtitle, action }: { eyebrow: string; title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-heading"><div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{subtitle}</p></div>{action}</div> }
 function Metric({ label, value, change, icon: Icon, tone }: { label: string; value: string; change: string; icon: typeof Wallet; tone: string }) { return <div className="metric-card"><div className={`metric-icon ${tone}`}><Icon size={18} /></div><span>{label}</span><strong>{value}</strong><small>{change}</small></div> }
-function SalesChart({ transactions, now }: { transactions: Transaction[]; now: Date }) {
-  const days = Array.from({ length: 7 }, (_, index) => { const day = new Date(now); day.setDate(day.getDate() - (6 - index)); return day })
-  const values = days.map((day) => transactions.filter((item) => sameLocalDay(item.date, day)).reduce((sum, item) => sum + item.total, 0))
-  const max = Math.max(...values, 500)
-  return <div className="sales-chart"><div className="chart-guides"><span>₱{Math.ceil(max / 100) * 100}</span><span>₱{Math.ceil(max / 200) * 100}</span><span>₱0</span></div><div className="chart-columns">{days.map((day, index) => <div className="chart-column" key={day.toDateString()}><div className="bar-track"><div className={`chart-bar${index === 6 ? ' today' : ''}`} style={{ height: `${Math.max(values[index] ? values[index] / max * 100 : 3, 3)}%` }} title={money(values[index])} /></div><span>{day.toLocaleDateString('en', { weekday: 'short' })}</span></div>)}</div></div>
+function SalesChart({ transactions, start, end, now }: { transactions: Transaction[]; start?: Date; end?: Date; now?: Date }) {
+  const chartEnd = end || now || new Date()
+  const chartStart = start || new Date(chartEnd.getTime() - 6 * 86_400_000)
+  const dayCount = Math.max(1, Math.ceil((chartEnd.getTime() - chartStart.getTime()) / 86_400_000) + 1)
+  const bucketCount = Math.min(dayCount, 14)
+  const span = Math.max(chartEnd.getTime() - chartStart.getTime() + 1, 1)
+  const buckets = Array.from({ length: bucketCount }, (_, index) => ({ value: 0, from: new Date(chartStart.getTime() + span * index / bucketCount), to: new Date(chartStart.getTime() + span * (index + 1) / bucketCount - 1) }))
+  transactions.forEach((transaction) => {
+    const ratio = (new Date(transaction.date).getTime() - chartStart.getTime()) / span
+    const index = Math.max(0, Math.min(bucketCount - 1, Math.floor(ratio * bucketCount)))
+    if (Number.isFinite(ratio)) buckets[index].value += transaction.total
+  })
+  const max = Math.max(...buckets.map((bucket) => bucket.value), 500)
+  const label = (date: Date) => date.toLocaleDateString('en', { month: 'numeric', day: 'numeric' })
+  return <div className="sales-chart"><div className="chart-guides"><span>₱{Math.ceil(max / 100) * 100}</span><span>₱{Math.ceil(max / 200) * 100}</span><span>₱0</span></div><div className="chart-columns" style={{ gridTemplateColumns: `repeat(${bucketCount}, minmax(0, 1fr))` }}>{buckets.map((bucket, index) => <div className="chart-column" key={`${bucket.from.toISOString()}-${index}`}><div className="bar-track"><div className={`chart-bar${index === bucketCount - 1 ? ' today' : ''}`} style={{ height: `${Math.max(bucket.value ? bucket.value / max * 100 : 3, 3)}%` }} title={`${label(bucket.from)}${bucketCount > 1 ? `–${label(bucket.to)}` : ''}: ${money(bucket.value)}`} /></div><span>{label(bucket.from)}</span></div>)}</div></div>
 }
 function CategorySalesChart({ transactions }: { transactions: Transaction[] }) {
   const totals = new Map<CategoryId, number>(categories.map((category) => [category.id, 0]))
@@ -794,7 +742,9 @@ function HourlyOrdersChart({ transactions }: { transactions: Transaction[] }) {
     buckets[Math.floor(hour / 2)].count += 1
   })
   const maximum = Math.max(...buckets.map((bucket) => bucket.count), 1)
-  return <section className="content-panel report-graph-panel"><div className="panel-heading"><div><h2>Orders by time</h2><span>Order volume by two-hour window</span></div></div>{transactions.length ? <div className="hourly-orders-chart">{buckets.map((bucket) => <div className="hourly-order-column" key={bucket.start}><b>{bucket.count || ''}</b><div className="hourly-order-track"><i style={{ height: `${bucket.count ? Math.max(bucket.count / maximum * 100, 5) : 0}%` }} /></div><span>{String(bucket.start % 12 || 12)}{bucket.start < 12 ? 'a' : 'p'}</span></div>)}</div> : <ChartEmpty message="Order activity will appear when sales are recorded." />}</section>
+  const peak = buckets.reduce((best, bucket) => bucket.count > best.count ? bucket : best, buckets[0])
+  const peakLabel = `${String(peak.start % 12 || 12)}${peak.start < 12 ? 'a' : 'p'}`
+  return <section className="content-panel report-graph-panel hourly-orders-panel"><div className="panel-heading"><div><h2>Orders by time</h2><span>Order volume by two-hour window</span></div>{transactions.length > 0 && <div className="hourly-peak"><span>BUSIEST WINDOW</span><b>{peakLabel} · {peak.count} {peak.count === 1 ? 'order' : 'orders'}</b></div>}</div>{transactions.length ? <div className="hourly-orders-chart" role="img" aria-label={`Orders by two-hour window. Busiest period is ${peakLabel} with ${peak.count} orders.`}>{buckets.map((bucket) => { const label = `${String(bucket.start % 12 || 12)}${bucket.start < 12 ? 'a' : 'p'}`; return <div className={`hourly-order-column${bucket.start === peak.start ? ' peak' : ''}`} key={bucket.start} title={`${label}: ${bucket.count} ${bucket.count === 1 ? 'order' : 'orders'}`}><b>{bucket.count}</b><div className="hourly-order-track"><i style={{ height: `${bucket.count ? Math.max(bucket.count / maximum * 100, 5) : 0}%` }} /></div><span>{label}</span></div> })}</div> : <ChartEmpty message="Order activity will appear when sales are recorded." />}</section>
 }
 function ChartEmpty({ message }: { message: string }) { return <div className="report-chart-empty"><BarChart3 size={22} /><span>{message}</span></div> }
 function TopProducts({ transactions }: { transactions: Transaction[] }) {
@@ -853,5 +803,6 @@ function ImagePicker({ value, onChange }: { value: string; onChange: (value: str
   return <div className="image-picker"><label className="form-label">{value ? 'Replace product image' : 'Add product image'}<input type="file" accept="image/*" onChange={(event) => handleFile(event.target.files?.[0])} /></label>{value && <div className="image-picker-preview"><img src={value} alt="Current product image preview" /><button type="button" className="table-action" onClick={() => onChange('')}>Remove image</button></div>}{error && <span className="image-error">{error}</span>}</div>
 }
 function StockForm({ item, onSave }: { item: StockItem | null; onSave: (item: StockItem) => void }) { const [name, setName] = useState(item?.name || ''); const [quantity, setQuantity] = useState(String(item?.quantity || '')); const [unit, setUnit] = useState(item?.unit || 'pcs'); const [low, setLow] = useState(String(item?.low || '')); return <><label className="form-label">Item name<input placeholder="e.g. Vanilla syrup" value={name} onChange={(event) => setName(event.target.value)} /></label><div className="form-row"><label className="form-label">Quantity<input type="number" min="0" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label className="form-label">Unit<input value={unit} onChange={(event) => setUnit(event.target.value)} /></label></div><label className="form-label">Reorder point<input type="number" min="0" value={low} onChange={(event) => setLow(event.target.value)} /></label><button className="primary-button full-width" onClick={() => { if (!name.trim()) return; onSave({ id: item?.id || `stock-${Date.now()}`, name: name.trim(), quantity: Number(quantity), unit, low: Number(low) }) }}>Save inventory <Check size={15} /></button></> }
+
 
 export default App

@@ -11,6 +11,7 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const dist = resolve(root, 'dist')
 const port = Number(process.env.PORT || 8787)
 const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase() || ''
+const adminPassword = process.env.ADMIN_PASSWORD || ''
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim() || ''
 const googleClient = new OAuth2Client(googleClientId || undefined)
 const smtpHost = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com'
@@ -32,12 +33,11 @@ const maxBodyBytes = 16 * 1024
 const codeExpiryMs = 10 * 60 * 1000
 const requestWindowMs = 15 * 60 * 1000
 const resendCooldownMs = 60 * 1000
-const maxRequestsPerWindow = 3
+const maxRequestsPerWindow = 5
 const maxVerificationAttempts = 5
 const codeHashKey = randomBytes(32)
 const codes = new Map()
 const ipRequests = new Map()
-const adminRequestTimes = []
 
 const sendJson = (response, status, body) => {
   response.writeHead(status, {
@@ -102,40 +102,32 @@ const verifyGoogleCredential = async (request, response) => {
   }
 }
 
-const verifyDirectAdmin = async (request, response) => {
+const verifyAdminPassword = async (request, response) => {
   if (request.method !== 'POST') {
     response.setHeader('Allow', 'POST')
     return sendJson(response, 405, { error: 'Method not allowed.' })
   }
+  if (!adminEmail || !adminPassword) return sendJson(response, 503, { error: 'Admin password sign-in is not configured on the server.' })
+  if (!enforceRequestLimit(getRequestIp(request), Date.now())) return sendJson(response, 429, { error: 'Too many sign-in attempts. Try again later.' })
   let body
-  try {
-    body = await readJsonBody(request)
-  } catch (error) {
-    return sendJson(response, Number.isInteger(error.status) ? error.status : 400, { error: error.message })
-  }
+  try { body = await readJsonBody(request) }
+  catch (error) { return sendJson(response, Number.isInteger(error.status) ? error.status : 400, { error: error.message }) }
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
-  if (!email || !/^[^@\s]+@gmail\.com$/i.test(email)) {
-    return sendJson(response, 400, { error: 'A valid Gmail address is required.' })
+  const password = typeof body.password === 'string' ? body.password : ''
+  const expectedHash = createHmac('sha256', 'shots-and-sparkles-admin').update(adminPassword).digest()
+  const suppliedHash = createHmac('sha256', 'shots-and-sparkles-admin').update(password).digest()
+  if (email !== adminEmail || !timingSafeEqual(suppliedHash, expectedHash)) {
+    return sendJson(response, 401, { error: 'Gmail or password is incorrect.' })
   }
-  if (adminEmail && email !== adminEmail) {
-    return sendJson(response, 403, { error: 'This Gmail account is not authorized as store administrator.' })
-  }
-  return sendJson(response, 200, {
-    ok: true,
-    email: email || adminEmail,
-    role: 'Manager',
-    email_verified: true,
-  })
+  return sendJson(response, 200, { email, email_verified: true })
 }
 
 const enforceRequestLimit = (ip, now) => {
-  while (adminRequestTimes.length && adminRequestTimes[0] <= now - requestWindowMs) adminRequestTimes.shift()
   const entry = ipRequests.get(ip)
   if (entry && entry.windowStartedAt <= now - requestWindowMs) ipRequests.delete(ip)
   const active = ipRequests.get(ip)
-  if (adminRequestTimes.length >= maxRequestsPerWindow || (active && active.count >= maxRequestsPerWindow)) return false
+  if (active && active.count >= maxRequestsPerWindow) return false
   if (ipRequests.size >= 2000 && !active) return false
-  adminRequestTimes.push(now)
   if (active) active.count += 1
   else ipRequests.set(ip, { windowStartedAt: now, count: 1 })
   return true
@@ -300,10 +292,6 @@ const serveApp = async (request, response, pathname) => {
 
 createServer((request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`)
-  if (url.pathname === '/api/auth/admin-direct' || url.pathname === '/api/auth/direct') {
-    void verifyDirectAdmin(request, response)
-    return
-  }
   if (url.pathname === '/api/auth/email-code/request') {
     void requestEmailCode(request, response)
     return
@@ -316,13 +304,16 @@ createServer((request, response) => {
     void verifyGoogleCredential(request, response)
     return
   }
+  if (url.pathname === '/api/auth/password/verify') {
+    void verifyAdminPassword(request, response)
+    return
+  }
   if (url.pathname === '/api/health') {
     sendJson(response, 200, {
       ok: true,
       adminEmailConfigured: Boolean(adminEmail),
       emailCodeSignInConfigured: emailCodeConfigured,
       googleSignInConfigured,
-      directAdminSignInConfigured: Boolean(adminEmail),
     })
     return
   }
