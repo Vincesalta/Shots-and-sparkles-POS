@@ -606,7 +606,7 @@ function App() {
       <nav>{navItems.filter((item) => !item.managerOnly || role === 'Manager').map((item) => {
         const Icon = item.icon
         return <button key={item.id} className={`nav-link${view === item.id ? ' active' : ''}`} onClick={() => setView(item.id)} aria-label={item.label} title={item.label}><Icon size={18} /><span>{item.label}</span>{item.id === 'inventory' && lowStock.length > 0 && <b className="nav-count">{lowStock.length}</b>}</button>
-      })}</nav>
+      })}<button className="nav-link mobile-logout-button" onClick={() => { localStorage.removeItem(authSessionKey); sessionStorage.removeItem('ss-user'); sessionStorage.removeItem('ss-role'); setAuthSession(null); setCart([]) }} aria-label="Sign out" title="Sign out"><LogOut size={18} /><span>Sign out</span></button></nav>
       <div className="sidebar-bottom"><div className="shift-card"><div><span className="live-dot" /> SHIFT IN PROGRESS</div><strong>{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong><small>Started today</small></div>
         <button className="user-card" onClick={() => setModal('login')}><div className="avatar">{user.charAt(0).toUpperCase()}</div><span><b>{user}</b><small>{role}</small></span><ChevronDown size={15} /></button>
         <button className="logout-button" onClick={() => { localStorage.removeItem(authSessionKey); sessionStorage.removeItem('ss-user'); sessionStorage.removeItem('ss-role'); setAuthSession(null); setCart([]) }}><LogOut size={15} /> Sign out</button>
