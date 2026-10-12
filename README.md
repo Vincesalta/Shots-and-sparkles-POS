@@ -35,6 +35,8 @@ Admin login accepts only the Gmail configured as `ADMIN_EMAIL` and a separate st
 
 Use the included `render.yaml` Blueprint and set `ADMIN_EMAIL`, `VITE_ADMIN_EMAIL` (the same authorized Gmail), and a strong `ADMIN_PASSWORD` in the Render environment. The Render `SMTP_PASS` only matters for the optional email-code API.
 
+After deployment, open `https://<your-render-service>/api/health`. Password sign-in requires both `adminEmailConfigured` and `adminPasswordConfigured` to be `true`. If either is `false`, add the missing server environment variable in Render's **Environment** settings and redeploy. The `VITE_` email variable only prefills the login form; it does not configure server authentication.
+
 The server only sends codes to the configured `ADMIN_EMAIL` and never returns a code to the browser. It keeps code hashes in memory and removes codes after successful verification. Local POS data remains device-local; this prototype does not provide server-enforced authorization for the POS data itself.
 
 ## Included workflows

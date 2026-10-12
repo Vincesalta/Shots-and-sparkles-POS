@@ -312,6 +312,7 @@ createServer((request, response) => {
     sendJson(response, 200, {
       ok: true,
       adminEmailConfigured: Boolean(adminEmail),
+      adminPasswordConfigured: Boolean(adminPassword),
       emailCodeSignInConfigured: emailCodeConfigured,
       googleSignInConfigured,
     })
@@ -319,6 +320,6 @@ createServer((request, response) => {
   }
   void serveApp(request, response, url.pathname)
 }).listen(port, '0.0.0.0', () => {
-  console.info('[server] emailCodeSignInConfigured=' + emailCodeConfigured + ' googleSignInConfigured=' + googleSignInConfigured)
+  console.info('[server] adminEmailConfigured=' + Boolean(adminEmail) + ' adminPasswordConfigured=' + Boolean(adminPassword) + ' emailCodeSignInConfigured=' + emailCodeConfigured + ' googleSignInConfigured=' + googleSignInConfigured)
   console.info(`POS server listening on port ${port}`)
 })
