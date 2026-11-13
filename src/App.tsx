@@ -171,6 +171,7 @@ function App() {
   const [adminPasswordInput, setAdminPasswordInput] = useState('')
   const [loginStage, setLoginStage] = useState<'roles' | 'admin' | 'cashier'>('roles')
   const [adminCodeBusy, setAdminCodeBusy] = useState(false)
+  const adminPasswordSignInInFlight = useRef(false)
   const [newProductName, setNewProductName] = useState('')
   const [newProductPrice, setNewProductPrice] = useState('60')
   const [newProductCategory, setNewProductCategory] = useState<CategoryId>('coffee')
@@ -499,8 +500,10 @@ function App() {
     finally { setAdminCodeBusy(false) }
   }
   const signInAdminWithPassword = async () => {
+    if (adminPasswordSignInInFlight.current) return
     const email = adminEmailInput.trim().toLowerCase()
     if (!email || !adminPasswordInput) return notify('Enter your Gmail and password.')
+    adminPasswordSignInInFlight.current = true
     setAdminCodeBusy(true)
     try {
       const response = await fetch('/api/auth/password/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: adminPasswordInput }) })
@@ -511,7 +514,10 @@ function App() {
         recordSignIn(result.email, 'Manager')
       }
     } catch { notify('Could not contact the sign-in service. Check your connection and try again.') }
-    finally { setAdminCodeBusy(false) }
+    finally {
+      adminPasswordSignInInFlight.current = false
+      setAdminCodeBusy(false)
+    }
   }
   useEffect(() => {
     if (modal !== 'login' || loginStage !== 'admin' || !googleClientId) return
@@ -584,12 +590,12 @@ function App() {
         <button className="role-choice" onClick={() => { setLoginName(''); setLoginStage('cashier') }}><UserRound size={20} /><span><b>Cashier sign in</b><small>Enter your name for the shift log</small></span><ArrowRight size={16} /></button>
       </>}
       {loginStage === 'admin' && <><button className="back-link" onClick={() => setLoginStage('roles')}><ArrowRight size={14} /> Back to roles</button><h2>Admin sign in</h2><p>Use your authorized Gmail and store password.</p>
-      <div className="login-form" aria-busy={adminCodeBusy}>
+      <form className="login-form" aria-busy={adminCodeBusy} onSubmit={(event) => { event.preventDefault(); void signInAdminWithPassword() }}>
         <label className="form-label admin-email-label">Admin Gmail<input type="email" autoComplete="username" value={adminEmailInput} onChange={(event) => setAdminEmailInput(event.target.value)} placeholder="Enter admin Gmail" /></label>
-        <label className="form-label">Password<input type="password" autoComplete="current-password" value={adminPasswordInput} onChange={(event) => setAdminPasswordInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void signInAdminWithPassword() }} placeholder="Enter your store password" /></label>
-        <button className="primary-button full-width admin-signin-button" disabled={adminCodeBusy} onClick={() => void signInAdminWithPassword()}>Sign in as Admin <ArrowRight size={17} /></button>
+        <label className="form-label">Password<input type="password" autoComplete="current-password" value={adminPasswordInput} onChange={(event) => setAdminPasswordInput(event.target.value)} placeholder="Enter your store password" /></label>
+        <button className="primary-button full-width admin-signin-button" type="submit" disabled={adminCodeBusy}>Sign in as Admin <ArrowRight size={17} /></button>
         <small className="admin-signin-note">Use your store password. Do not enter your Google account password.</small>
-      </div></>}
+      </form></>}
       {loginStage === 'cashier' && <><button className="back-link" onClick={() => setLoginStage('roles')}><ArrowRight size={14} /> Back to roles</button><h2>Cashier sign in</h2><p>Your name will be attached to orders and shift activity.</p>
         <label className="form-label">Cashier name<input autoComplete="name" value={loginName} onChange={(event) => setLoginName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submitCashierSignIn() }} placeholder="Enter your full name" /></label>
         <button className="primary-button full-width" onClick={submitCashierSignIn}>Continue to POS <ArrowRight size={15} /></button>
