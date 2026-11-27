@@ -9,10 +9,10 @@
   "theme_color": "#251a16",
   "icons": [
     {
-      "src": "/shots-sparkles.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "src": "/images/icon.jpg",
+      "sizes": "200x200",
+      "type": "image/jpeg",
+      "purpose": "any"
     }
   ]
 }

@@ -15,7 +15,9 @@ Open the local URL printed by Vite. Production assets can be checked with `npm r
 
 The customer ordering app is a separate page at `/customer.html`; the staff welcome screen links directly to customer login, which opens without an extra portal step. The root app remains the staff POS and retains its server-backed admin sign-in. Customer sign-in and saved session are isolated from staff sign-in, and the customer build is forced into buyer-only mode.
 
-The staff POS and customer menu use a compact cart icon with an item-count badge. Tap it to open the order drawer, adjust quantities, review totals, and continue to checkout.
+The staff POS and customer menu use a fixed cart icon with an item-count badge. Tap it to open the order drawer, adjust quantities, review totals, and continue to checkout. Accepted customer orders remain in a floating staff queue with item details, fulfillment information, and customer contact details.
+
+Both installable app manifests use `images/icon.jpg` as their launcher icon.
 
 Customer checkout collects dine-in or delivery, requires an address for delivery, and requires a GCash reference number when GCash is selected. Managers and cashiers can accept or decline new customer orders; accepted orders remain in an in-progress queue until staff marks them ready, on the way, or complete. Customers see order-status updates in their order history, with pickup-ready or delivery-on-the-way messages when preparation is finished. These updates are shared across devices only when the configured sync service is available. Customer profiles are device-local and are not server-authenticated accounts.
 

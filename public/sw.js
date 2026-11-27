@@ -1,5 +1,5 @@
-const CACHE_NAME = 'shots-sparkles-pos-v8'
-const APP_SHELL = ['/', '/customer.html', '/manifest.webmanifest', '/customer.webmanifest', '/shots-sparkles.svg']
+const CACHE_NAME = 'shots-sparkles-pos-v9'
+const APP_SHELL = ['/', '/customer.html', '/manifest.webmanifest', '/customer.webmanifest', '/shots-sparkles.svg', '/images/icon.jpg']
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {

@@ -511,7 +511,10 @@ html[data-theme="dark"] .table-scroll td{border-color:#373d38;color:#ddd6cc}
 html[data-theme="dark"] .table-scroll td b,html[data-theme="dark"] .table-scroll td strong{color:#eee9e1}
 html[data-theme="dark"] .settings-section>div>span,html[data-theme="dark"] .settings-section small{color:#aaa39a}
 .buyer-menu-layout{grid-template-columns:minmax(0,1fr)}
-.buyer-cart-icon-button{z-index:24}
+.cart-icon-button{position:fixed;z-index:24;right:24px;bottom:22px;width:56px;height:56px;display:grid;place-items:center;border:1px solid #d6bd82;border-radius:50%;background:#2c6548;color:#fff;box-shadow:0 8px 24px rgba(27,65,43,.28);transition:transform .16s,background .16s}
+.cart-icon-button:hover{transform:translateY(-2px);background:#214f38}
+.cart-icon-count{position:absolute;top:-3px;right:-3px;min-width:21px;height:21px;padding:0 5px;display:grid;place-items:center;border:2px solid #fff;border-radius:20px;background:#d7b86f;color:#30271e;font-size:10px;font-weight:800}
+.buyer-cart-icon-button{bottom:max(22px,env(safe-area-inset-bottom))}
 .buyer-cart-backdrop{z-index:80}
 .buyer-cart-drawer{position:relative;top:auto;width:min(440px,100%);height:100%;margin:0;padding:24px;display:flex;flex-direction:column;overflow:auto;border:0;border-left:1px solid #e8dfd1;border-radius:18px 0 0 18px;background:#fffdf9;box-shadow:-14px 0 50px rgba(38,28,21,.2);animation:cart-slide-in .2s ease-out}
 .buyer-cart-heading-actions{display:flex;align-items:center;gap:14px}
@@ -522,7 +525,7 @@ html[data-theme="dark"] .settings-section>div>span,html[data-theme="dark"] .sett
 html[data-theme="dark"] .buyer-cart-drawer{background:#222724;border-color:#414741}
 html[data-theme="dark"] .buyer-cart-heading-actions .cart-close-button{background:#292e2a;border-color:#414741;color:#eee9e1}
 @keyframes cart-slide-in{from{transform:translateX(20px);opacity:.7}to{transform:translateX(0);opacity:1}}
-@media(max-width:600px){.buyer-cart-drawer{padding:18px 16px;border-radius:16px 0 0 16px}}
+@media(max-width:600px){.cart-icon-button{right:16px;bottom:max(16px,env(safe-area-inset-bottom));width:52px;height:52px}.buyer-cart-drawer{padding:18px 16px;border-radius:16px 0 0 16px}}
 .pos-layout{grid-template-columns:minmax(0,1fr)}
 .overlay{z-index:100}
 html[data-theme="dark"] .buyer-profile-form-footer>span{color:#aaa39a}

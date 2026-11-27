@@ -727,7 +727,15 @@ function App() {
           const nextStatus: BuyerOrderStatus = order.status === 'Preparing' ? order.fulfillmentType === 'Delivery' ? 'OutForDelivery' : 'Ready' : 'Completed'
           const nextAction = order.status === 'Preparing' ? order.fulfillmentType === 'Delivery' ? 'Mark on the way' : 'Mark ready for pickup' : order.status === 'Ready' ? 'Complete pickup' : 'Mark delivered'
           return <div className="buyer-order-alert-card active-buyer-order-card" key={order.id}>
-            <div><b>{order.customerName || 'Customer'} · {order.status === 'Preparing' ? 'Preparing' : order.status === 'Ready' ? 'Ready for pickup' : 'On the way'}</b><span>{order.id} · {order.fulfillmentType || 'Dine in'} · {money(order.total)}</span></div>
+            <div className="active-buyer-order-details">
+              <b>{order.customerName || 'Customer'} · {order.status === 'Preparing' ? 'Preparing' : order.status === 'Ready' ? 'Ready for pickup' : 'On the way'}</b>
+              <span>{order.id} · {order.fulfillmentType || 'Dine in'} · {order.method} · {money(order.total)}</span>
+              {order.customerPhone && <span>{order.customerPhone}</span>}
+              {order.fulfillmentType === 'Delivery' && order.customerAddress && <span className="active-buyer-order-address">Delivery to: {order.customerAddress}</span>}
+              <ul>{order.items.map((item) => <li key={item.key}><span><b>{item.quantity}× {item.name}</b><small>{item.variant}{item.category !== 'dessert' ? ` · ${item.sugar} sugar` : ''}{item.addons.length ? ` · ${item.addons.join(', ')}` : ''}</small></span><strong>{money(item.price * item.quantity)}</strong></li>)}</ul>
+              {order.reference && <span>GCash reference: {order.reference}</span>}
+              {order.handledBy && <span>Accepted by {order.handledBy}</span>}
+            </div>
             <div className="buyer-order-alert-actions"><button type="button" onClick={() => setBuyerOrderStatus(order.id, nextStatus)}>{nextAction}</button></div>
           </div>
         })}
