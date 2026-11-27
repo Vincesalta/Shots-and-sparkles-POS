@@ -155,6 +155,7 @@ function App() {
   const [productListMode, setProductListMode] = useState<'active' | 'archived'>('active')
   const [search, setSearch] = useState('')
   const [cart, setCart] = useState<CartItem[]>([])
+  const [cartOpen, setCartOpen] = useState(false)
   const [selected, setSelected] = useState<Product | null>(null)
   const [variantIndex, setVariantIndex] = useState(0)
   const [sugar, setSugar] = useState('100%')
@@ -195,6 +196,15 @@ function App() {
   const [buyerProfilePhoto, setBuyerProfilePhoto] = useState('')
   const knownBuyerOrderIds = useRef(new Set(transactions.filter((transaction) => transaction.source === 'buyer').map((transaction) => transaction.id)))
   const knownBuyerOrderStatuses = useRef(new Map(transactions.filter((transaction) => transaction.source === 'buyer').map((transaction) => [transaction.id, transaction.status])))
+
+  useEffect(() => {
+    if (!cartOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setCartOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [cartOpen])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -247,6 +257,7 @@ function App() {
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
   const tax = Math.round(subtotal * 0.12 * 100) / 100
   const total = Math.max(0, subtotal + tax - discount)
+  const cartItemCount = cart.reduce((quantity, item) => quantity + item.quantity, 0)
   const todayTransactions = transactions.filter((item) => isCompletedSale(item) && sameLocalDay(item.date, now))
   const todaySales = todayTransactions.reduce((sum, item) => sum + item.total, 0)
   const visibleTransactions = role === 'Manager' ? transactions : role === 'Buyer' ? transactions.filter((item) => item.source === 'buyer' && item.buyerId === buyerId) : transactions.filter((item) => item.cashier === user)
@@ -440,6 +451,7 @@ function App() {
     setTransactions((items) => [sale, ...items])
     setReceipt(sale)
     setCart([])
+    setCartOpen(false)
     setDiscount(0)
     setCashReceived('')
     setCurrentCustomerId('')
@@ -498,6 +510,7 @@ function App() {
     knownBuyerOrderStatuses.current.set(order.id, 'Pending')
     setTransactions((items) => [order, ...items])
     setCart([])
+    setCartOpen(false)
     setModal(null)
     setView('orders')
     notify('Order placed! We’ll let you know when the shop responds.')
@@ -798,7 +811,7 @@ function App() {
         </div>
       </header>
       <div className="page-content">
-        {view === 'pos' && role === 'Buyer' && <BuyerStore products={visibleProducts} category={category} search={search} cart={cart} subtotal={subtotal} tax={tax} total={total} connectionNotice={!syncEndpoint ? 'Preview mode: your orders are shared with the admin only on this device. Set up cloud sync before inviting customers on other devices.' : !isOnline ? 'You’re offline. New orders will stay on this device until your connection returns.' : syncStatus === 'error' ? 'The shop connection is having trouble. Your order may not have reached the team yet; try syncing again.' : ''} onCategoryChange={setCategory} onSearchChange={setSearch} onStartOrder={startOrder} onQuantityChange={updateQuantity} onClearCart={() => setCart([])} onSubmitOrder={checkoutBuyerOrder} onViewOrders={() => setView('orders')} onViewCart={() => document.getElementById('buyer-cart')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} />}
+        {view === 'pos' && role === 'Buyer' && <BuyerStore products={visibleProducts} category={category} search={search} cart={cart} cartOpen={cartOpen} subtotal={subtotal} tax={tax} total={total} connectionNotice={!syncEndpoint ? 'Preview mode: your orders are shared with the admin only on this device. Set up cloud sync before inviting customers on other devices.' : !isOnline ? 'You’re offline. New orders will stay on this device until your connection returns.' : syncStatus === 'error' ? 'The shop connection is having trouble. Your order may not have reached the team yet; try syncing again.' : ''} onCategoryChange={setCategory} onSearchChange={setSearch} onStartOrder={startOrder} onQuantityChange={updateQuantity} onClearCart={() => setCart([])} onSubmitOrder={checkoutBuyerOrder} onViewOrders={() => setView('orders')} onViewCart={() => setCartOpen(true)} onCloseCart={() => setCartOpen(false)} />}
         {view === 'orders' && role === 'Buyer' && <BuyerOrderHistory orders={buyerOrders} onShop={() => setView('pos')} />}
         {view === 'profile' && role === 'Buyer' && <BuyerProfilePage
           name={buyerProfileName}
@@ -831,12 +844,18 @@ function App() {
               </button>)}</div>
               {visibleProducts.length === 0 && <div className="empty-state"><Search size={23} /><b>No drinks found</b><span>Try another search or category.</span></div>}
             </section>
-            <aside className="cart-panel"><div className="cart-header"><div><h2>Current order</h2><select className="customer-select" aria-label="Select customer" value={currentCustomerId} onChange={(event) => setCurrentCustomerId(event.target.value)}><option value="">Walk-in customer</option>{customers.filter((customer) => customer.active).map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></div><button className="text-button" onClick={() => setCart([])} disabled={!cart.length}>Clear</button></div>
+          </div>
+          <button className="cart-icon-button" type="button" onClick={() => setCartOpen(true)} aria-label={`Open cart, ${cartItemCount} ${cartItemCount === 1 ? 'item' : 'items'}`} title="Open cart">
+            <ShoppingCart size={21} />{cartItemCount > 0 && <span className="cart-icon-count">{cartItemCount}</span>}
+          </button>
+          {cartOpen && <div className="cart-drawer-backdrop" onClick={() => setCartOpen(false)}>
+            <aside className="cart-panel cart-drawer" role="dialog" aria-modal="true" aria-label="Current order" onClick={(event) => event.stopPropagation()}>
+              <div className="cart-header"><div><h2>Current order</h2><select className="customer-select" aria-label="Select customer" value={currentCustomerId} onChange={(event) => setCurrentCustomerId(event.target.value)}><option value="">Walk-in customer</option>{customers.filter((customer) => customer.active).map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></div><div className="cart-header-actions"><button className="text-button" onClick={() => setCart([])} disabled={!cart.length}>Clear</button><button className="cart-close-button" type="button" onClick={() => setCartOpen(false)} aria-label="Close cart"><X size={18} /></button></div></div>
               <div className="order-meta"><span><span className="order-dot" /> NEW ORDER</span><b>#{String(transactions.length + 1).padStart(4, '0')}</b></div>
               <div className="cart-items">{cart.length ? cart.map((item) => <div className="cart-row" key={item.key}><div className="cart-item-art">{item.imageData ? <img src={item.imageData} alt="" /> : <Coffee size={17} />}</div><div className="cart-item-detail"><b>{item.name}</b><span>{item.variant} · {item.sugar} sugar{item.addons.length ? ` · ${item.addons.join(', ')}` : ''}</span><strong>{money(item.price * item.quantity)}</strong></div><div className="quantity-control"><button onClick={() => updateQuantity(item.key, -1)} aria-label="Decrease quantity"><Minus size={12} /></button><b>{item.quantity}</b><button onClick={() => updateQuantity(item.key, 1)} aria-label="Increase quantity"><Plus size={12} /></button></div></div>) : <div className="cart-empty"><div className="empty-bag"><ShoppingBag size={22} /></div><b>Your order is waiting</b><span>Tap a menu favorite to add it here.</span></div>}</div>
               <div className="cart-bottom"><button className="promo-link" onClick={() => setModal('discount')}><Tag size={15} /> Add discount or promo <Plus size={14} /></button>{discount > 0 && <div className="discount-row"><span>Discount applied</span><b>−{money(discount)}</b></div>}<div className="summary-line"><span>Subtotal</span><b>{money(subtotal)}</b></div><div className="summary-line"><span>VAT <small>12%</small></span><b>{money(tax)}</b></div><div className="total-line"><b>Total due</b><strong>{money(total)}</strong></div><button className="checkout-button" onClick={checkout} disabled={!cart.length}><span><CreditCard size={17} /> Charge customer</span><b>{money(total)} <ArrowRight size={16} /></b></button><div className="secure-note"><ShieldCheck size={12} /> Secure checkout · Tax included</div></div>
             </aside>
-          </div>
+          </div>}
           <div className="pos-footnote"><span><Sparkles size={14} /> Made fresh, made for you</span><span>Need a hand? <button onClick={() => notify('Ask your manager for support.')}>Get help <CircleHelp size={13} /></button></span></div>
         </>}
 
@@ -1015,11 +1034,12 @@ function ProfilePhotoEditor({ name, photo, onChange }: { name: string; photo: st
   </div>
 }
 
-function BuyerStore({ products, category, search, cart, subtotal, tax, total, connectionNotice, onCategoryChange, onSearchChange, onStartOrder, onQuantityChange, onClearCart, onSubmitOrder, onViewOrders, onViewCart }: {
+function BuyerStore({ products, category, search, cart, cartOpen, subtotal, tax, total, connectionNotice, onCategoryChange, onSearchChange, onStartOrder, onQuantityChange, onClearCart, onSubmitOrder, onViewOrders, onViewCart, onCloseCart }: {
   products: Product[]
   category: CategoryId | 'all'
   search: string
   cart: CartItem[]
+  cartOpen: boolean
   subtotal: number
   tax: number
   total: number
@@ -1032,6 +1052,7 @@ function BuyerStore({ products, category, search, cart, subtotal, tax, total, co
   onSubmitOrder: () => void
   onViewOrders: () => void
   onViewCart: () => void
+  onCloseCart: () => void
 }) {
   const cartCount = cart.reduce((quantity, item) => quantity + item.quantity, 0)
   return <div className="buyer-store">
@@ -1055,14 +1076,18 @@ function BuyerStore({ products, category, search, cart, subtotal, tax, total, co
         </article>)}</div>
         {!products.length && <div className="buyer-empty"><Search size={22} /><b>No matches just yet</b><span>Try another flavor or clear your filters to see everything.</span><button onClick={() => { onSearchChange(''); onCategoryChange('all') }}>Show all menu items</button></div>}
       </section>
-      <aside className="buyer-cart-card" id="buyer-cart">
-        <div className="buyer-cart-heading"><div><span className="eyebrow">YOUR LITTLE LINEUP</span><h2>Your bag <span>{cart.reduce((quantity, item) => quantity + item.quantity, 0)}</span></h2></div><ShoppingBag size={21} /></div>
-        {cart.length ? <><div className="buyer-cart-items">{cart.map((item) => <div className="buyer-cart-item" key={item.key}><div className={`buyer-cart-thumb color-${item.category}`}>{item.imageData ? <img src={item.imageData} alt="" /> : <Coffee size={18} />}</div><div className="buyer-cart-detail"><b>{item.name}</b><span>{item.variant} · {item.sugar} sugar{item.addons.length ? ` · ${item.addons.join(', ')}` : ''}</span><strong>{money(item.price * item.quantity)}</strong><div className="buyer-quantity"><button onClick={() => onQuantityChange(item.key, -1)} aria-label="Remove one"><Minus size={12} /></button><span>{item.quantity}</span><button onClick={() => onQuantityChange(item.key, 1)} aria-label="Add one"><Plus size={12} /></button></div></div></div>)}</div>
-          <button className="buyer-clear" onClick={onClearCart}>Clear bag</button><div className="buyer-total-lines"><div><span>Subtotal</span><b>{money(subtotal)}</b></div><div><span>VAT <small>12%</small></span><b>{money(tax)}</b></div><div className="buyer-total"><span>Total</span><strong>{money(total)}</strong></div></div><button className="buyer-place-order" onClick={onSubmitOrder}><span>Place my order <ArrowRight size={17} /></span><b>{money(total)}</b></button><p className="buyer-pay-note"><ShieldCheck size={14} /> Choose dine-in or delivery and payment at checkout.</p>
-        </> : <div className="buyer-cart-empty"><div><ShoppingBag size={23} /></div><b>Something lovely starts here.</b><span>Add a drink or treat to your bag.</span><button onClick={onViewOrders}>Track my orders <ArrowRight size={14} /></button></div>}
-      </aside>
     </div>
-    {cartCount > 0 && <button className="buyer-mobile-cart" onClick={onViewCart}><span><ShoppingBag size={17} /> View bag <b>{cartCount}</b></span><strong>{money(total)} <ArrowRight size={15} /></strong></button>}
+    <button className="cart-icon-button buyer-cart-icon-button" type="button" onClick={onViewCart} aria-label={`Open bag, ${cartCount} ${cartCount === 1 ? 'item' : 'items'}`} title="Open bag">
+      <ShoppingCart size={21} />{cartCount > 0 && <span className="cart-icon-count">{cartCount}</span>}
+    </button>
+    {cartOpen && <div className="cart-drawer-backdrop buyer-cart-backdrop" onClick={onCloseCart}>
+      <aside className="buyer-cart-card cart-drawer buyer-cart-drawer" id="buyer-cart" role="dialog" aria-modal="true" aria-label="Your bag" onClick={(event) => event.stopPropagation()}>
+        <div className="buyer-cart-heading"><div><span className="eyebrow">YOUR LITTLE LINEUP</span><h2>Your bag <span>{cartCount}</span></h2></div><div className="buyer-cart-heading-actions"><ShoppingBag size={21} /><button className="cart-close-button" type="button" onClick={onCloseCart} aria-label="Close cart"><X size={18} /></button></div></div>
+        {cart.length ? <><div className="buyer-cart-items">{cart.map((item) => <div className="buyer-cart-item" key={item.key}><div className={`buyer-cart-thumb color-${item.category}`}>{item.imageData ? <img src={item.imageData} alt="" /> : <Coffee size={18} />}</div><div className="buyer-cart-detail"><b>{item.name}</b><span>{item.variant} · {item.sugar} sugar{item.addons.length ? ` · ${item.addons.join(', ')}` : ''}</span><strong>{money(item.price * item.quantity)}</strong><div className="buyer-quantity"><button onClick={() => onQuantityChange(item.key, -1)} aria-label={`Remove one ${item.name}`}><Minus size={12} /></button><span>{item.quantity}</span><button onClick={() => onQuantityChange(item.key, 1)} aria-label={`Add one ${item.name}`}><Plus size={12} /></button></div></div></div>)}</div>
+          <button className="buyer-clear" onClick={onClearCart}>Clear bag</button><div className="buyer-total-lines"><div><span>Subtotal</span><b>{money(subtotal)}</b></div><div><span>VAT <small>12%</small></span><b>{money(tax)}</b></div><div className="buyer-total"><span>Total</span><strong>{money(total)}</strong></div></div><button className="buyer-place-order" onClick={onSubmitOrder}><span>Place my order <ArrowRight size={17} /></span><b>{money(total)}</b></button><p className="buyer-pay-note"><ShieldCheck size={14} /> Choose dine-in or delivery and payment at checkout.</p>
+        </> : <div className="buyer-cart-empty"><div><ShoppingBag size={23} /></div><b>Something lovely starts here.</b><span>Add a drink or treat to your bag.</span><button onClick={onCloseCart}>Browse the menu <ArrowRight size={14} /></button></div>}
+      </aside>
+    </div>}
     <footer className="buyer-footer"><span>Made with love, just for you <Sparkles size={13} /></span><button onClick={onViewOrders}>Already ordered? Track it <ArrowRight size={14} /></button></footer>
   </div>
 }

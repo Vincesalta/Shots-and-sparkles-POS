@@ -154,6 +154,7 @@ function App() {
   const [productListMode, setProductListMode] = useState<'active' | 'archived'>('active')
   const [search, setSearch] = useState('')
   const [cart, setCart] = useState<CartItem[]>([])
+  const [cartOpen, setCartOpen] = useState(false)
   const [heldOrders, setHeldOrders] = useState<HeldOrder[]>(() => JSON.parse(localStorage.getItem('ss-held-orders') || '[]'))
   const [selected, setSelected] = useState<Product | null>(null)
   const [variantIndex, setVariantIndex] = useState(0)
@@ -278,6 +279,7 @@ function App() {
   const syncTitle = lastSyncedAt ? `${syncLabel}. Last sync ${new Date(lastSyncedAt).toLocaleString()}` : `${syncLabel}. Configure VITE_SYNC_API_URL for cloud sync.`
   const selectedCustomer = customers.find((customer) => customer.id === currentCustomerId && customer.active)
   const selectedAddOnTotal = addons.reduce((sum, name) => sum + (addOns.find((item) => item.name === name)?.price || 0), 0)
+  const cartItemCount = cart.reduce((quantity, item) => quantity + item.quantity, 0)
   const pendingBuyerOrders = transactions.filter((transaction) => transaction.source === 'buyer' && transaction.status === 'Pending')
   const activeBuyerOrders = transactions.filter(isActiveBuyerOrder).sort((first, second) => first.date.localeCompare(second.date))
   const appendStockMovement = (item: StockItem, change: number, action: StockMovement['action']) => setStockMovements((items) => [{
@@ -291,6 +293,14 @@ function App() {
     actor: user || 'System',
   }, ...items].slice(0, 500))
 
+  useEffect(() => {
+    if (!cartOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setCartOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [cartOpen])
   useEffect(() => {
     if (!syncEndpoint || !isOnline || snapshotIsSynced) return
 
@@ -486,6 +496,7 @@ function App() {
     setTransactions((items) => [sale, ...items])
     setReceipt(sale)
     setCart([])
+    setCartOpen(false)
     setDiscount(0)
     setCashReceived('')
     setCurrentCustomerId('')
@@ -749,12 +760,18 @@ function App() {
               </button>)}</div>
               {visibleProducts.length === 0 && <div className="empty-state"><Search size={23} /><b>No drinks found</b><span>Try another search or category.</span></div>}
             </section>
-            <aside className="cart-panel"><div className="cart-header"><div><h2>Current order</h2><select className="customer-select" aria-label="Select customer" value={currentCustomerId} onChange={(event) => setCurrentCustomerId(event.target.value)}><option value="">Walk-in customer</option>{customers.filter((customer) => customer.active).map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></div><div className="cart-header-actions"><button className="text-button held-orders-trigger" onClick={() => setModal('held-orders')}>Held <span>{heldOrders.length}</span></button><button className="text-button" onClick={() => setCart([])} disabled={!cart.length}>Clear</button></div></div>
+          </div>
+          <button className="cart-icon-button" type="button" onClick={() => setCartOpen(true)} aria-label={`Open cart, ${cartItemCount} ${cartItemCount === 1 ? 'item' : 'items'}`} title="Open cart">
+            <ShoppingCart size={21} />{cartItemCount > 0 && <span className="cart-icon-count">{cartItemCount}</span>}
+          </button>
+          {cartOpen && <div className="cart-drawer-backdrop" onClick={() => setCartOpen(false)}>
+            <aside className="cart-panel cart-drawer" role="dialog" aria-modal="true" aria-label="Current order" onClick={(event) => event.stopPropagation()}>
+              <div className="cart-header"><div><h2>Current order</h2><select className="customer-select" aria-label="Select customer" value={currentCustomerId} onChange={(event) => setCurrentCustomerId(event.target.value)}><option value="">Walk-in customer</option>{customers.filter((customer) => customer.active).map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></div><div className="cart-header-actions"><button className="text-button held-orders-trigger" onClick={() => setModal('held-orders')}>Held <span>{heldOrders.length}</span></button><button className="text-button" onClick={() => setCart([])} disabled={!cart.length}>Clear</button><button className="cart-close-button" type="button" onClick={() => setCartOpen(false)} aria-label="Close cart"><X size={18} /></button></div></div>
               <div className="order-meta"><span><span className="order-dot" /> NEW ORDER</span><b>#{String(transactions.length + 1).padStart(4, '0')}</b></div>
               <div className="cart-items">{cart.length ? cart.map((item) => <div className="cart-row" key={item.key}><div className="cart-item-art">{item.imageData ? <img src={item.imageData} alt="" /> : <Coffee size={17} />}</div><div className="cart-item-detail"><b>{item.name}</b><span>{item.variant} · {item.sugar} sugar{item.addons.length ? ` · ${item.addons.join(', ')}` : ''}</span><strong>{money(item.price * item.quantity)}</strong></div><div className="quantity-control"><button onClick={() => updateQuantity(item.key, -1)} aria-label="Decrease quantity"><Minus size={12} /></button><b>{item.quantity}</b><button onClick={() => updateQuantity(item.key, 1)} aria-label="Increase quantity"><Plus size={12} /></button></div></div>) : <div className="cart-empty"><div className="empty-bag"><ShoppingBag size={22} /></div><b>Your order is waiting</b><span>Tap a menu favorite to add it here.</span></div>}</div>
               <div className="cart-bottom"><button className="park-order-button" onClick={parkCurrentOrder} disabled={!cart.length}><Pause size={14} /> Park order for later</button><button className="promo-link" onClick={() => setModal('discount')}><Tag size={15} /> Add discount or promo <Plus size={14} /></button>{discount > 0 && <div className="discount-row"><span>Discount applied</span><b>−{money(discount)}</b></div>}<div className="summary-line"><span>Subtotal</span><b>{money(subtotal)}</b></div><div className="summary-line"><span>VAT <small>12%</small></span><b>{money(tax)}</b></div><div className="total-line"><b>Total due</b><strong>{money(total)}</strong></div><button className="checkout-button" onClick={checkout} disabled={!cart.length}><span><CreditCard size={17} /> Charge customer</span><b>{money(total)} <ArrowRight size={16} /></b></button><div className="secure-note"><ShieldCheck size={12} /> Secure checkout · Tax included</div></div>
             </aside>
-          </div>
+          </div>}
           <div className="pos-footnote"><span><Sparkles size={14} /> Made fresh, made for you</span><span>Need a hand? <button onClick={() => notify('Ask your manager for support.')}>Get help <CircleHelp size={13} /></button></span></div>
         </>}
 

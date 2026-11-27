@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shots-sparkles-pos-v7'
+const CACHE_NAME = 'shots-sparkles-pos-v8'
 const APP_SHELL = ['/', '/customer.html', '/manifest.webmanifest', '/customer.webmanifest', '/shots-sparkles.svg']
 
 self.addEventListener('install', (event) => {

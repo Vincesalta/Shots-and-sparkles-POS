@@ -428,5 +428,21 @@
 .account-status.active{background:#e8f4ec;color:#286b4b}
 .account-status.blocked{background:#faeaea;color:#a33d3d}
 .account-delete-action{display:inline-flex;align-items:center;gap:4px;color:#a33d3d}
+.cart-icon-button{position:fixed;z-index:24;right:24px;bottom:22px;width:56px;height:56px;display:grid;place-items:center;border:1px solid #d6bd82;border-radius:50%;background:#2c6548;color:#fff;box-shadow:0 8px 24px rgba(27,65,43,.28);transition:transform .16s,background .16s}
+.cart-icon-button:hover{transform:translateY(-2px);background:#214f38}
+.cart-icon-count{position:absolute;top:-3px;right:-3px;min-width:21px;height:21px;padding:0 5px;display:grid;place-items:center;border:2px solid #fff;border-radius:20px;background:#d7b86f;color:#30271e;font-size:10px;font-weight:800}
+.cart-drawer-backdrop{position:fixed;z-index:80;inset:0;display:flex;justify-content:flex-end;background:rgba(31,25,20,.48);backdrop-filter:blur(2px);animation:fade-up .16s ease-out}
+.cart-drawer{width:min(440px,100%);height:100%;min-height:0;margin:0;padding:24px;display:flex;flex-direction:column;overflow:auto;border:0;border-left:1px solid #e8dfd1;border-radius:18px 0 0 18px;background:#fffdf9;box-shadow:-14px 0 50px rgba(38,28,21,.2);animation:cart-slide-in .2s ease-out}
+.cart-drawer .cart-header{flex-shrink:0}
+.cart-drawer .cart-items{flex:1;min-height:90px;max-height:none;overflow-y:auto}
+.cart-drawer .cart-bottom{flex-shrink:0;padding-top:14px}
+.cart-close-button{width:34px;height:34px;display:grid;place-items:center;border:1px solid #e8e1d6;border-radius:50%;background:#fff;color:#6b5b4c}
+.cart-close-button:hover{background:#f4f0e8;color:#30271e}
+@keyframes cart-slide-in{from{transform:translateX(20px);opacity:.7}to{transform:translateX(0);opacity:1}}
+html[data-theme="dark"] .cart-drawer{background:#222724;border-color:#414741}
+html[data-theme="dark"] .cart-close-button{background:#292e2a;border-color:#414741;color:#eee9e1}
+@media(max-width:600px){.cart-icon-button{right:16px;bottom:16px;width:52px;height:52px}.cart-drawer{padding:18px 16px;border-radius:16px 0 0 16px}}
+.pos-layout{grid-template-columns:minmax(0,1fr)}
+.overlay{z-index:100}
 .landing-logo-trigger{display:block;margin:0 auto 12px;padding:0;border:0;background:transparent;color:inherit}
 .landing-logo-trigger:focus-visible{outline:2px solid #d5b56e;outline-offset:5px;border-radius:50%}
