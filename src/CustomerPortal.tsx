@@ -575,8 +575,11 @@ function App() {
   const submitBuyerSignIn = () => {
     const name = loginName.trim()
     if (name.length < 2) return notify('Please enter your name to continue.')
+    const phone = buyerPhone.trim()
+    const phoneDigits = phone.replace(/\D/g, '')
+    if (phoneDigits.length < 7 || phoneDigits.length > 15) return notify('Enter a valid mobile number to continue.')
     setDiscount(0)
-    recordSignIn(name, 'Buyer', buyerPhone.trim())
+    recordSignIn(name, 'Buyer', phone)
   }
 
   const navItems: { id: View; label: string; icon: typeof ShoppingCart; managerOnly?: boolean }[] = [
@@ -611,7 +614,7 @@ function App() {
       <p className="welcome-eyebrow">{isCustomerPortal ? 'CUSTOMER PORTAL' : 'YOUR NEIGHBORHOOD SIP STOP'}</p>
       <h1>{isCustomerPortal ? <>Order something<br /><em>lovely.</em></> : <>Good things<br /><em>are brewing.</em></>}</h1>
       <p className="welcome-copy">{isCustomerPortal ? 'Browse the menu, place an order, and follow its status.' : 'Made with love, just for you.'}</p>
-      <button className="welcome-button" onClick={() => { setLoginStage(isCustomerPortal ? 'buyer' : 'roles'); setModal('login') }}>{isCustomerPortal ? 'Enter customer portal' : 'Staff sign in'} <ArrowRight size={17} /></button>
+      <button className="welcome-button" onClick={() => { setLoginName(''); setLoginStage(isCustomerPortal ? 'buyer' : 'roles'); setModal('login') }}>{isCustomerPortal ? 'Customer login' : 'Staff sign in'} <ArrowRight size={17} /></button>
       {!isCustomerPortal && <a className="customer-portal-link" href="/customer.html">Go to customer portal <ArrowRight size={13} /></a>}
       <div className="welcome-contact"><span>[redacted-phone]</span><span>@shotsandsparkles</span></div>
       <div className="welcome-footer">HANDCRAFTED DAILY <i>·</i> SHARED WITH JOY</div>
@@ -636,10 +639,12 @@ function App() {
         <label className="form-label">Cashier name<input autoComplete="name" value={loginName} onChange={(event) => setLoginName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submitCashierSignIn() }} placeholder="Enter your full name" /></label>
         <button className="primary-button full-width" onClick={submitCashierSignIn}>Continue to POS <ArrowRight size={15} /></button>
       </>}
-      {isCustomerPortal && loginStage === 'buyer' && <><button className="back-link" onClick={() => setModal(null)}><ArrowRight size={14} /> Back to portal</button><h2>Welcome, friend.</h2><p>Tell us what to call you so the team can prepare your order.</p>
-        <label className="form-label">Your name<input autoComplete="name" value={loginName} onChange={(event) => setLoginName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submitBuyerSignIn() }} placeholder="Enter your name" /></label>
-        <label className="form-label">Mobile number <span className="optional-label">optional</span><input autoComplete="tel" inputMode="tel" value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} placeholder="09xx xxx xxxx" /></label>
-        <button className="primary-button full-width" onClick={submitBuyerSignIn}>Explore the menu <ArrowRight size={15} /></button>
+      {isCustomerPortal && loginStage === 'buyer' && <><button className="back-link" onClick={() => setModal(null)}><ArrowRight size={14} /> Back to portal</button><h2>Customer login</h2><p>Enter your name and mobile number to continue.</p>
+        <form onSubmit={(event) => { event.preventDefault(); submitBuyerSignIn() }}>
+          <label className="form-label">Your name<input autoComplete="name" value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="Enter your name" required minLength={2} /></label>
+          <label className="form-label">Mobile number<input type="tel" autoComplete="tel" inputMode="tel" value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} placeholder="09xx xxx xxxx" required /></label>
+          <button className="primary-button full-width" type="submit">Continue to the menu <ArrowRight size={15} /></button>
+        </form>
       </>}
     </div></div>}
     {notification && <div className="toast">{notification}</div>}
