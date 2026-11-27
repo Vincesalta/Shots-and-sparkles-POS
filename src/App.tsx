@@ -170,6 +170,8 @@ function App() {
   const [adminEmailInput, setAdminEmailInput] = useState('')
   const [adminPasswordInput, setAdminPasswordInput] = useState('')
   const [loginStage, setLoginStage] = useState<'roles' | 'admin' | 'cashier'>('roles')
+  const [staffLoginRevealed, setStaffLoginRevealed] = useState(false)
+  const [logoTapCount, setLogoTapCount] = useState(0)
   const [adminCodeBusy, setAdminCodeBusy] = useState(false)
   const adminPasswordSignInInFlight = useRef(false)
   const knownBuyerOrderIds = useRef(new Set<string>())
@@ -613,18 +615,26 @@ function App() {
       <p className="welcome-eyebrow">YOUR NEIGHBORHOOD SIP STOP</p>
       <h1>Good things<br /><em>are brewing.</em></h1>
       <p className="welcome-copy">Made with love, just for you.</p>
-      <button className="welcome-button" onClick={() => { setLoginStage('roles'); setModal('login') }}>Get started <ArrowRight size={17} /></button>
+      <button className="welcome-button" onClick={() => { setLoginStage('roles'); setStaffLoginRevealed(false); setLogoTapCount(0); setModal('login') }}>Get started <ArrowRight size={17} /></button>
       <a className="customer-portal-link" href="/customer.html">Customer portal <ArrowRight size={13} /></a>
       <div className="welcome-contact"><span>[redacted-phone]</span><span>@shotsandsparkles</span></div>
       <div className="welcome-footer">HANDCRAFTED DAILY <i>·</i> SHARED WITH JOY</div>
     </div>
     {modal === 'login' && <div className="overlay" onClick={() => setModal(null)}><div className="dialog role-dialog" onClick={(event) => event.stopPropagation()}>
-      <button className="icon-button dialog-close" onClick={() => { setModal(null); setLoginStage('roles') }} aria-label="Close"><X size={18} /></button>
-      <LogoMark compact />
-      {loginStage === 'roles' && <><h2>Welcome to the counter</h2><p>Choose how you’re signing in.</p>
+      <button className="icon-button dialog-close" onClick={() => { setModal(null); setLoginStage('roles'); setStaffLoginRevealed(false); setLogoTapCount(0) }} aria-label="Close"><X size={18} /></button>
+      <button className="login-logo-trigger" type="button" aria-label="Shots & Sparkles logo" onClick={() => {
+        const nextCount = logoTapCount + 1
+        if (nextCount >= 10) {
+          setStaffLoginRevealed(true)
+          setLogoTapCount(0)
+        } else {
+          setLogoTapCount(nextCount)
+        }
+      }}><LogoMark compact /></button>
+      {loginStage === 'roles' && <>{staffLoginRevealed ? <><h2>Welcome to the counter</h2><p>Choose how you’re signing in.</p>
         <button className="role-choice" onClick={() => setLoginStage('admin')}><ShieldCheck size={20} /><span><b>Admin sign in</b><small>Single authorized Gmail account</small></span><ArrowRight size={16} /></button>
         <button className="role-choice" onClick={() => { setLoginName(''); setLoginStage('cashier') }}><UserRound size={20} /><span><b>Cashier sign in</b><small>Enter your name for the shift log</small></span><ArrowRight size={16} /></button>
-      </>}
+      </> : <><h2>Welcome back</h2><p>Please sign in to continue.</p></>}</>}
       {loginStage === 'admin' && <><button className="back-link" onClick={() => setLoginStage('roles')}><ArrowRight size={14} /> Back to roles</button><h2>Admin sign in</h2><p>Use your authorized Gmail and store password.</p>
       <form className="login-form" aria-busy={adminCodeBusy} onSubmit={(event) => { event.preventDefault(); void signInAdminWithPassword() }}>
         <label className="form-label admin-email-label">Admin Gmail<input type="email" autoComplete="username" value={adminEmailInput} onChange={(event) => setAdminEmailInput(event.target.value)} placeholder="Enter admin Gmail" /></label>

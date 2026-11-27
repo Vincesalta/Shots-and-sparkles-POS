@@ -420,3 +420,5 @@
 @media(max-width:600px){.buyer-order-alert{right:14px;bottom:14px}}
 .customer-portal-link{display:inline-flex;align-items:center;gap:6px;margin-top:16px;color:#7e6a51;font-size:11px;text-decoration:none}
 .customer-portal-link:hover{color:#315943}
+.login-logo-trigger{display:block;margin:0 auto 20px;padding:0;border:0;background:transparent;color:inherit}
+.login-logo-trigger:focus-visible{outline:2px solid #d5b56e;outline-offset:5px;border-radius:50%}
