@@ -15,7 +15,7 @@ Open the local URL printed by Vite. Production assets can be checked with `npm r
 
 The customer ordering app is a separate page at `/customer.html`; the staff welcome screen links directly to customer login, which opens without an extra portal step. The root app remains the staff POS and retains its server-backed admin sign-in. Customer sign-in and saved session are isolated from staff sign-in, and the customer build is forced into buyer-only mode.
 
-The staff POS and customer menu use a fixed cart icon with an item-count badge. Tap it to open the order drawer, adjust quantities, review totals, and continue to checkout. Accepted customer orders remain in a floating staff queue with item details, fulfillment information, and customer contact details.
+The staff POS and customer menu use a fixed cart icon with an item-count badge. Tap it to open a full-screen overlay drawer, adjust quantities, review totals, and continue to checkout without scrolling back to the cart. Accepted customer orders remain in a floating staff queue with item details, fulfillment information, and customer contact details.
 
 Both installable app manifests use `images/icon.jpg` as their launcher icon.
 

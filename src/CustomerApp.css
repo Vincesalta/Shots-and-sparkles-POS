@@ -515,7 +515,7 @@ html[data-theme="dark"] .settings-section>div>span,html[data-theme="dark"] .sett
 .cart-icon-button:hover{transform:translateY(-2px);background:#214f38}
 .cart-icon-count{position:absolute;top:-3px;right:-3px;min-width:21px;height:21px;padding:0 5px;display:grid;place-items:center;border:2px solid #fff;border-radius:20px;background:#d7b86f;color:#30271e;font-size:10px;font-weight:800}
 .buyer-cart-icon-button{bottom:max(22px,env(safe-area-inset-bottom))}
-.buyer-cart-backdrop{z-index:80}
+.buyer-cart-backdrop{position:fixed;z-index:80;inset:0;display:flex;justify-content:flex-end;background:rgba(31,25,20,.48);backdrop-filter:blur(2px);animation:fade-up .16s ease-out}
 .buyer-cart-drawer{position:relative;top:auto;width:min(440px,100%);height:100%;margin:0;padding:24px;display:flex;flex-direction:column;overflow:auto;border:0;border-left:1px solid #e8dfd1;border-radius:18px 0 0 18px;background:#fffdf9;box-shadow:-14px 0 50px rgba(38,28,21,.2);animation:cart-slide-in .2s ease-out}
 .buyer-cart-heading-actions{display:flex;align-items:center;gap:14px}
 .buyer-cart-heading-actions .cart-close-button{color:#6b5b4c}
