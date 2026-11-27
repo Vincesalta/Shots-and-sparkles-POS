@@ -420,5 +420,11 @@
 @media(max-width:600px){.buyer-order-alert{right:14px;bottom:14px}}
 .customer-portal-link{display:inline-flex;align-items:center;gap:6px;margin-top:16px;color:#7e6a51;font-size:11px;text-decoration:none}
 .customer-portal-link:hover{color:#315943}
+.buyer-account-panel{margin-bottom:20px}
+.account-sync-note{margin:0 22px 14px;padding:11px 13px;border:1px solid #eee4d0;border-radius:10px;background:#fbf7ed;color:#75613f;font-size:12px;line-height:1.5}
+.account-status{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:700}
+.account-status.active{background:#e8f4ec;color:#286b4b}
+.account-status.blocked{background:#faeaea;color:#a33d3d}
+.account-delete-action{display:inline-flex;align-items:center;gap:4px;color:#a33d3d}
 .landing-logo-trigger{display:block;margin:0 auto 12px;padding:0;border:0;background:transparent;color:inherit}
 .landing-logo-trigger:focus-visible{outline:2px solid #d5b56e;outline-offset:5px;border-radius:50%}

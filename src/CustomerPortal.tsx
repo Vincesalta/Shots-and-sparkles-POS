@@ -19,7 +19,7 @@ type CartItem = { key: string; productId: string; name: string; category: Catego
 type Transaction = { id: string; date: string; items: CartItem[]; total: number; method: string; cashier: string; reference?: string; discount: number; customerId?: string; customerName?: string; customerPhone?: string; customerEmail?: string; customerAddress?: string; buyerId?: string; source?: 'buyer'; status?: 'Pending' | 'Accepted' | 'Declined' }
 type StockItem = { id: string; name: string; quantity: number; unit: string; low: number }
 type StockMovement = { id: string; date: string; itemId: string; itemName: string; action: 'Restock' | 'Adjustment' | 'Sale' | 'Deleted'; change: number; balance: number; actor: string }
-type Customer = { id: string; name: string; phone: string; email: string; notes: string; active: boolean }
+type Customer = { id: string; name: string; phone: string; email: string; notes: string; active: boolean; accountId?: string; accountStatus?: 'active' | 'blocked' | 'deleted' }
 type StaffMember = { name: string; role: Role; status: 'Active' | 'On leave' }
 
 const categoriesLabels = Object.fromEntries(categories.map((category) => [category.id, category.shortLabel])) as Record<CategoryId, string>
@@ -39,7 +39,12 @@ const isCustomerPortal = isCustomerApp || window.location.pathname === '/custome
 const storedSessionUser = () => {
   if (isCustomerPortal) {
     const savedCustomer = localStorage.getItem('ss-customer-user') || sessionStorage.getItem('ss-customer-user')
-    if (savedCustomer) return savedCustomer
+    if (savedCustomer) {
+      const buyerId = localStorage.getItem('ss-buyer-id')
+      const accounts = JSON.parse(localStorage.getItem('ss-customers') || '[]') as Customer[]
+      const account = accounts.find((customer) => customer.accountId === buyerId)
+      return account?.accountStatus === 'blocked' || account?.accountStatus === 'deleted' ? '' : savedCustomer
+    }
     return localStorage.getItem('ss-role') === 'Buyer' ? localStorage.getItem('ss-user') || '' : ''
   }
   const savedRole = localStorage.getItem('ss-role') || sessionStorage.getItem('ss-role')
@@ -323,6 +328,35 @@ function App() {
   const notify = (message: string) => { setNotification(message); window.setTimeout(() => setNotification(''), 2500) }
 
   useEffect(() => {
+    if (!isCustomerPortal) return
+    const handleCustomerAccounts = (event: StorageEvent) => {
+      if (event.key !== 'ss-customers') return
+      try {
+        const nextCustomers = event.newValue ? JSON.parse(event.newValue) as Customer[] : []
+        setCustomers(nextCustomers)
+        const account = nextCustomers.find((customer) => customer.accountId === buyerId)
+        if (role === 'Buyer' && user && (account?.accountStatus === 'blocked' || account?.accountStatus === 'deleted')) {
+          localStorage.removeItem(sessionUserKey)
+          localStorage.removeItem(sessionRoleKey)
+          localStorage.removeItem(sessionPhoneKey)
+          sessionStorage.removeItem(sessionUserKey)
+          sessionStorage.removeItem(sessionRoleKey)
+          sessionStorage.removeItem(sessionPhoneKey)
+          setUser('')
+          setBuyerPhone('')
+          setCart([])
+          setView('pos')
+          notify('This customer account is no longer active. Please contact the shop.')
+        }
+      } catch (error) {
+        console.error('Unable to read customer account updates:', error)
+      }
+    }
+    window.addEventListener('storage', handleCustomerAccounts)
+    return () => window.removeEventListener('storage', handleCustomerAccounts)
+  }, [buyerId, role, user])
+
+  useEffect(() => {
     if (role !== 'Manager') return
     transactions.forEach((transaction) => {
       if (transaction.source !== 'buyer' || transaction.status !== 'Pending' || knownBuyerOrderIds.current.has(transaction.id)) return
@@ -487,6 +521,22 @@ function App() {
     setModal(null)
     setView(selectedRole === 'Manager' ? 'dashboard' : 'pos')
   }
+  const saveBuyerAccount = (name: string, phone: string, email = '') => {
+    setCustomers((items) => {
+      const existing = items.find((item) => item.accountId === buyerId)
+      const account: Customer = {
+        id: existing?.id || `portal-${buyerId}`,
+        accountId: buyerId,
+        accountStatus: existing?.accountStatus || 'active',
+        name,
+        phone,
+        email,
+        notes: existing?.notes || '',
+        active: true,
+      }
+      return existing ? items.map((item) => item.accountId === buyerId ? account : item) : [...items, account]
+    })
+  }
   const signOut = () => {
     if (!window.confirm('Are you sure you want to sign out? You will need to sign in again to continue.')) return
     localStorage.removeItem(sessionUserKey)
@@ -510,6 +560,8 @@ function App() {
     event.preventDefault()
     const name = buyerProfileName.trim()
     if (name.length < 2) return notify('Please enter a name with at least 2 characters.')
+    const account = customers.find((customer) => customer.accountId === buyerId)
+    if (account?.accountStatus === 'blocked' || account?.accountStatus === 'deleted') return notify('This customer account is no longer active. Please contact the shop.')
     try {
       if (buyerProfilePhoto) localStorage.setItem('ss-buyer-photo', buyerProfilePhoto)
       else localStorage.removeItem('ss-buyer-photo')
@@ -523,6 +575,7 @@ function App() {
     setBuyerEmail(buyerProfileEmail.trim())
     setBuyerAddress(buyerProfileAddress.trim())
     setBuyerPhoto(buyerProfilePhoto)
+    saveBuyerAccount(name, buyerProfilePhone.trim(), buyerProfileEmail.trim())
     localStorage.setItem(sessionUserKey, name)
     localStorage.setItem('ss-buyer-phone', buyerProfilePhone.trim())
     localStorage.setItem('ss-buyer-email', buyerProfileEmail.trim())
@@ -578,7 +631,11 @@ function App() {
     const phone = buyerPhone.trim()
     const phoneDigits = phone.replace(/\D/g, '')
     if (phoneDigits.length < 7 || phoneDigits.length > 15) return notify('Enter a valid mobile number to continue.')
+    const existingAccount = customers.find((customer) => customer.accountId === buyerId)
+    if (existingAccount?.accountStatus === 'blocked') return notify('This customer account is blocked. Please contact the shop.')
+    if (existingAccount?.accountStatus === 'deleted') return notify('This customer account was deleted. Please contact the shop.')
     setDiscount(0)
+    saveBuyerAccount(name, phone, buyerEmail)
     recordSignIn(name, 'Buyer', phone)
   }
 
