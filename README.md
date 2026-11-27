@@ -13,6 +13,10 @@ npm run dev
 
 Open the local URL printed by Vite. Production assets can be checked with `npm run build`; source linting uses `npm run lint`.
 
+The customer ordering app is a separate page at `/customer.html`. The root app remains the staff POS and retains its server-backed admin sign-in. Customer sign-in and saved session are isolated from staff sign-in, and the customer build is forced into buyer-only mode. Customer profiles are device-local and are not server-authenticated accounts. Managers can accept or decline pending customer orders in the POS when the order data is available to that device.
+
+The customer and staff pages on the same browser origin can read shared local data. Separate phones and computers require an authenticated, persistent sync API configured through `VITE_SYNC_API_URL`; the Render server in this repository does not provide that store-sync API. Do not expect orders placed on a separate customer phone to appear in the admin app until that API is deployed and configured.
+
 For offline/PWA verification, serve the production build over HTTPS (localhost is also permitted), open the app while connected, then disconnect and reload. Browser storage is not a substitute for a backup; avoid clearing site data on a register with unsynced orders.
 
 ## Cloud sync

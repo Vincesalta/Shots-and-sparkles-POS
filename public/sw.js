@@ -1,14 +1,16 @@
-const CACHE_NAME = 'shots-sparkles-pos-v3'
-const APP_SHELL = ['/', '/manifest.webmanifest', '/shots-sparkles.svg']
+const CACHE_NAME = 'shots-sparkles-pos-v4'
+const APP_SHELL = ['/', '/customer.html', '/manifest.webmanifest', '/customer.webmanifest', '/shots-sparkles.svg']
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME)
     await cache.addAll(APP_SHELL)
-    const shell = await cache.match('/')
-    const html = await shell?.text() || ''
-    const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+\.(?:js|css))"/g)].map((match) => match[1])
-    await cache.addAll(assets)
+    const pages = await Promise.all(['/', '/customer.html'].map((path) => cache.match(path)))
+    const assetsByPage = await Promise.all(pages.map(async (page) => {
+      const html = await page?.text() || ''
+      return [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+\.(?:js|css))"/g)].map((match) => match[1])
+    }))
+    await cache.addAll([...new Set(assetsByPage.flat())])
   })())
   self.skipWaiting()
 })
@@ -31,10 +33,14 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(request).then((response) => {
       if (response.ok) {
         const copy = response.clone()
-        void caches.open(CACHE_NAME).then((cache) => cache.put('/', copy))
+        const cachePath = url.pathname === '/customer.html' ? '/customer.html' : '/'
+        void caches.open(CACHE_NAME).then((cache) => cache.put(cachePath, copy))
       }
       return response
-    }).catch(async () => (await caches.match(request)) || (await caches.match('/'))))
+    }).catch(async () => {
+      const fallbackPath = url.pathname === '/customer.html' ? '/customer.html' : '/'
+      return (await caches.match(request)) || (await caches.match(fallbackPath))
+    }))
     return
   }
 

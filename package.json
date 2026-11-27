@@ -8,6 +8,7 @@
     "dev:auth": "node server/index.js",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
+    "build:customer": "tsc -b && vite build --mode customer",
     "lint": "oxlint",
     "preview": "vite preview",
     "start": "node server/index.js"

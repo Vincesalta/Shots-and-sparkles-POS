@@ -15,7 +15,7 @@ type AuthSession = { user: string; role: Role; lastActivityAt: number }
 type PaymentMethod = 'Cash' | 'GCash'
 type View = 'pos' | 'dashboard' | 'products' | 'inventory' | 'customers' | 'orders' | 'staff' | 'reports' | 'activity' | 'settings'
 type CartItem = { key: string; productId: string; name: string; category: CategoryId; variant: string; price: number; sugar: string; addons: string[]; quantity: number; imageData?: string }
-type Transaction = { id: string; date: string; items: CartItem[]; total: number; method: string; cashier: string; reference?: string; discount: number; customerId?: string; customerName?: string }
+type Transaction = { id: string; date: string; items: CartItem[]; total: number; method: string; cashier: string; reference?: string; discount: number; customerId?: string; customerName?: string; customerPhone?: string; customerEmail?: string; customerAddress?: string; buyerId?: string; source?: 'buyer'; status?: 'Pending' | 'Accepted' | 'Declined' }
 type HeldOrder = { id: string; label: string; createdAt: string; items: CartItem[]; discount: number; customerId: string }
 type StockItem = { id: string; name: string; quantity: number; unit: string; low: number }
 type StockMovement = { id: string; date: string; itemId: string; itemName: string; action: 'Restock' | 'Adjustment' | 'Sale' | 'Deleted'; change: number; balance: number; actor: string }
@@ -172,6 +172,8 @@ function App() {
   const [loginStage, setLoginStage] = useState<'roles' | 'admin' | 'cashier'>('roles')
   const [adminCodeBusy, setAdminCodeBusy] = useState(false)
   const adminPasswordSignInInFlight = useRef(false)
+  const knownBuyerOrderIds = useRef(new Set<string>())
+  const handledBuyerOrderIds = useRef(new Set<string>())
   const [newProductName, setNewProductName] = useState('')
   const [newProductPrice, setNewProductPrice] = useState('60')
   const [newProductCategory, setNewProductCategory] = useState<CategoryId>('coffee')
@@ -252,14 +254,15 @@ function App() {
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
   const tax = Math.round(subtotal * 0.12 * 100) / 100
   const total = Math.max(0, subtotal + tax - discount)
-  const todayTransactions = transactions.filter((item) => sameLocalDay(item.date, now))
+  const completedTransactions = transactions.filter((item) => item.status !== 'Pending' && item.status !== 'Declined')
+  const todayTransactions = completedTransactions.filter((item) => sameLocalDay(item.date, now))
   const todaySales = todayTransactions.reduce((sum, item) => sum + item.total, 0)
   const visibleTransactions = role === 'Manager' ? transactions : transactions.filter((item) => item.cashier === user)
-  const visibleTodayTransactions = visibleTransactions.filter((item) => sameLocalDay(item.date, now))
+  const visibleTodayTransactions = visibleTransactions.filter((item) => item.status !== 'Pending' && item.status !== 'Declined' && sameLocalDay(item.date, now))
   const selectedPeriodStart = reportRange === 'custom' ? new Date(`${reportFrom}T00:00:00`) : periodStart(now, reportRange)
   const selectedPeriodEnd = reportRange === 'custom' ? new Date(`${reportTo}T23:59:59.999`) : now
   const isValidReportPeriod = Number.isFinite(selectedPeriodStart.getTime()) && Number.isFinite(selectedPeriodEnd.getTime()) && selectedPeriodStart <= selectedPeriodEnd
-  const periodTransactions = visibleTransactions.filter((item) => isValidReportPeriod && isWithinPeriod(item.date, selectedPeriodStart, selectedPeriodEnd))
+  const periodTransactions = visibleTransactions.filter((item) => item.status !== 'Pending' && item.status !== 'Declined' && isValidReportPeriod && isWithinPeriod(item.date, selectedPeriodStart, selectedPeriodEnd))
   const reportPeriodLabel = reportRange === 'custom' ? `${reportFrom} to ${reportTo}` : reportRange
   const periodSales = periodTransactions.reduce((sum, item) => sum + item.total, 0)
   const lowStock = stock.filter((item) => item.quantity <= item.low)
@@ -269,6 +272,7 @@ function App() {
   const syncTitle = lastSyncedAt ? `${syncLabel}. Last sync ${new Date(lastSyncedAt).toLocaleString()}` : `${syncLabel}. Configure VITE_SYNC_API_URL for cloud sync.`
   const selectedCustomer = customers.find((customer) => customer.id === currentCustomerId && customer.active)
   const selectedAddOnTotal = addons.reduce((sum, name) => sum + (addOns.find((item) => item.name === name)?.price || 0), 0)
+  const pendingBuyerOrders = transactions.filter((transaction) => transaction.source === 'buyer' && transaction.status === 'Pending')
   const appendStockMovement = (item: StockItem, change: number, action: StockMovement['action']) => setStockMovements((items) => [{
     id: `move-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     date: new Date().toISOString(),
@@ -336,6 +340,37 @@ function App() {
   }, [isOnline, syncAttempt, snapshotFingerprint, snapshotIsSynced, products, transactions, stock, stockMovements, customers, staff, audit])
   const addAudit = (message: string) => setAudit((items) => [`${currentTimestamp()} · ${user || 'System'} · ${message}`, ...items].slice(0, 100))
   const notify = (message: string) => { setNotification(message); window.setTimeout(() => setNotification(''), 2500) }
+  useEffect(() => {
+    if (!user || role !== 'Manager') return
+    for (const transaction of pendingBuyerOrders) {
+      if (knownBuyerOrderIds.current.has(transaction.id)) continue
+      knownBuyerOrderIds.current.add(transaction.id)
+      notify(`New customer order from ${transaction.customerName || 'a customer'} · ${money(transaction.total)}`)
+    }
+  }, [pendingBuyerOrders, role, user])
+  const setBuyerOrderStatus = (id: string, status: 'Accepted' | 'Declined') => {
+    const order = transactions.find((transaction) => transaction.id === id)
+    if (!user || role !== 'Manager' || !order || order.source !== 'buyer' || order.status !== 'Pending' || handledBuyerOrderIds.current.has(id)) return
+    handledBuyerOrderIds.current.add(id)
+    setTransactions((items) => items.map((item) => item.id === id ? { ...item, status } : item))
+    addAudit(`${status} online order ${id} · ${money(order.total)}`)
+    if (status === 'Accepted') {
+      const nextStock = stock.map((stockItem) => {
+        if (!stockItem.id.startsWith('cups-')) return stockItem
+        const sizeKey = stockItem.id === 'cups-12' ? /small|12oz/i : stockItem.id === 'cups-16' ? /medium|16oz/i : /large|22oz/i
+        const used = order.items.filter((line) => line.category !== 'dessert' && sizeKey.test(line.variant)).reduce((quantity, line) => quantity + line.quantity, 0)
+        return used ? { ...stockItem, quantity: Math.max(0, stockItem.quantity - used) } : stockItem
+      })
+      const movements = nextStock.flatMap((item) => {
+        const previous = stock.find((oldItem) => oldItem.id === item.id)
+        const change = item.quantity - (previous?.quantity ?? item.quantity)
+        return change ? [{ id: `move-${Date.now()}-${item.id}`, date: new Date().toISOString(), itemId: item.id, itemName: item.name, action: 'Sale' as const, change, balance: item.quantity, actor: user }] : []
+      })
+      setStock(nextStock)
+      if (movements.length) setStockMovements((items) => [...movements, ...items].slice(0, 500))
+    }
+    notify(`Order ${id} ${status.toLowerCase()}.`)
+  }
   const printReceipt = () => {
     const clearPrintMode = () => document.body.classList.remove('receipt-print-mode')
     window.addEventListener('afterprint', clearPrintMode, { once: true })
@@ -579,6 +614,7 @@ function App() {
       <h1>Good things<br /><em>are brewing.</em></h1>
       <p className="welcome-copy">Made with love, just for you.</p>
       <button className="welcome-button" onClick={() => { setLoginStage('roles'); setModal('login') }}>Get started <ArrowRight size={17} /></button>
+      <a className="customer-portal-link" href="/customer.html">Customer portal <ArrowRight size={13} /></a>
       <div className="welcome-contact"><span>[redacted-phone]</span><span>@shotsandsparkles</span></div>
       <div className="welcome-footer">HANDCRAFTED DAILY <i>·</i> SHARED WITH JOY</div>
     </div>
@@ -605,6 +641,13 @@ function App() {
   </div>
 
   return <div className="app-shell">
+    {user && role === 'Manager' && pendingBuyerOrders.length > 0 && <aside className="buyer-order-alert" aria-label="Incoming customer orders">
+      <div className="buyer-order-alert-heading"><Bell size={16} /><b>{pendingBuyerOrders.length} customer order{pendingBuyerOrders.length === 1 ? '' : 's'} waiting</b></div>
+      {pendingBuyerOrders.map((order) => <div className="buyer-order-alert-card" key={order.id}>
+        <div><b>{order.customerName || 'Customer'}</b><span>{order.customerPhone || order.customerEmail || 'Online order'} · {money(order.total)}</span></div>
+        <div className="buyer-order-alert-actions"><button type="button" onClick={() => setBuyerOrderStatus(order.id, 'Declined')}>Decline</button><button type="button" onClick={() => setBuyerOrderStatus(order.id, 'Accepted')}>Accept</button></div>
+      </div>)}
+    </aside>}
     <aside className="sidebar">
       <div className="sidebar-brand"><LogoMark compact /><span className="brand-caption">STORE MANAGEMENT</span></div>
       <div className="store-switch"><span className="store-dot" /><span><b>Shots & Sparkles</b><small>San Isidro · Main store</small></span><ChevronDown size={15} /></div>
@@ -706,7 +749,7 @@ function SalesChart({ transactions, start, end, now }: { transactions: Transacti
   const bucketCount = Math.min(dayCount, 14)
   const span = Math.max(chartEnd.getTime() - chartStart.getTime() + 1, 1)
   const buckets = Array.from({ length: bucketCount }, (_, index) => ({ value: 0, from: new Date(chartStart.getTime() + span * index / bucketCount), to: new Date(chartStart.getTime() + span * (index + 1) / bucketCount - 1) }))
-  transactions.forEach((transaction) => {
+  transactions.filter((transaction) => transaction.status !== 'Pending' && transaction.status !== 'Declined').forEach((transaction) => {
     const ratio = (new Date(transaction.date).getTime() - chartStart.getTime()) / span
     const index = Math.max(0, Math.min(bucketCount - 1, Math.floor(ratio * bucketCount)))
     if (Number.isFinite(ratio)) buckets[index].value += transaction.total
@@ -755,7 +798,7 @@ function HourlyOrdersChart({ transactions }: { transactions: Transaction[] }) {
 function ChartEmpty({ message }: { message: string }) { return <div className="report-chart-empty"><BarChart3 size={22} /><span>{message}</span></div> }
 function TopProducts({ transactions }: { transactions: Transaction[] }) {
   const counts = new Map<string, { quantity: number; name: string; category: CategoryId }>()
-  transactions.forEach((transaction) => transaction.items.forEach((item) => { const current = counts.get(item.productId); counts.set(item.productId, { name: item.name, category: item.category, quantity: (current?.quantity || 0) + item.quantity }) }))
+  transactions.filter((transaction) => transaction.status !== 'Pending' && transaction.status !== 'Declined').forEach((transaction) => transaction.items.forEach((item) => { const current = counts.get(item.productId); counts.set(item.productId, { name: item.name, category: item.category, quantity: (current?.quantity || 0) + item.quantity }) }))
   const top = [...counts.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5)
   return top.length ? <div className="top-products">{top.map((item, index) => <div className="top-product" key={item.name}><span className={`rank rank-${index + 1}`}>{String(index + 1).padStart(2, '0')}</span><span className={`top-product-icon color-${item.category}`}><Coffee size={16} /></span><span><b>{item.name}</b><small>{categoriesLabels[item.category]}</small></span><strong>{item.quantity} sold</strong></div>)}</div> : <div className="empty-table"><ShoppingBag size={20} /><span>Completed orders will show your top picks.</span></div>
 }
