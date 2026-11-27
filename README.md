@@ -13,7 +13,9 @@ npm run dev
 
 Open the local URL printed by Vite. Production assets can be checked with `npm run build`; source linting uses `npm run lint`.
 
-The customer ordering app is a separate page at `/customer.html`. The root app remains the staff POS and retains its server-backed admin sign-in. Customer sign-in and saved session are isolated from staff sign-in, and the customer build is forced into buyer-only mode. Customer profiles are device-local and are not server-authenticated accounts. Managers can accept or decline pending customer orders in the POS when the order data is available to that device.
+The customer ordering app is a separate page at `/customer.html`; the staff welcome screen links directly to customer login, which opens without an extra portal step. The root app remains the staff POS and retains its server-backed admin sign-in. Customer sign-in and saved session are isolated from staff sign-in, and the customer build is forced into buyer-only mode.
+
+Customer checkout collects dine-in or delivery, requires an address for delivery, and requires a GCash reference number when GCash is selected. Managers can review the fulfillment, address, payment method, and reference before accepting or declining pending customer orders when the order data is available to that device. Customer profiles are device-local and are not server-authenticated accounts.
 
 Customer sign-ins appear in the manager’s Customer portal accounts list, where accounts can be blocked, unblocked, or deleted. These account controls apply to data available on the current device or through a configured shared sync service; without shared sync, an account created on a separate customer phone is not visible to the admin device.
 

@@ -514,3 +514,5 @@ html[data-theme="dark"] .buyer-profile-form-footer>span{color:#aaa39a}
 html[data-theme="dark"] .buyer-order-message{background:#332d20;color:#e4ca8e}
 html[data-theme="dark"] .buyer-order-message.accepted{background:#26382b;color:#a9d0ad}
 html[data-theme="dark"] .buyer-order-message.declined{background:#3a2925;color:#e7ad9b}
+.buyer-checkout-dialog{max-height:calc(100vh - 32px);overflow-y:auto}
+.buyer-checkout-dialog .gcash-payment span{max-width:320px;color:#62564b;font-size:11px;text-align:center;line-height:1.5}

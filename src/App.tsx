@@ -641,7 +641,7 @@ function App() {
       <p className="welcome-eyebrow">YOUR NEIGHBORHOOD SIP STOP</p>
       <h1>Good things<br /><em>are brewing.</em></h1>
       <p className="welcome-copy">Made with love, just for you.</p>
-      <a className="customer-portal-link" href="/customer.html">Customer portal <ArrowRight size={13} /></a>
+      <a className="customer-portal-link" href="/customer.html?login=1">Customer login <ArrowRight size={13} /></a>
       <div className="welcome-contact"><span>[redacted-phone]</span><span>@shotsandsparkles</span></div>
       <div className="welcome-footer">HANDCRAFTED DAILY <i>·</i> SHARED WITH JOY</div>
     </div>

@@ -12,11 +12,12 @@ import './CustomerApp.css'
 
 type Role = 'Manager' | 'Cashier' | 'Buyer'
 type PaymentMethod = 'Cash' | 'GCash'
+type FulfillmentType = 'Dine in' | 'Delivery'
 type Theme = 'light' | 'dark'
 type AdminAccount = { email: string; passwordHash: string }
 type View = 'pos' | 'dashboard' | 'products' | 'inventory' | 'customers' | 'orders' | 'staff' | 'reports' | 'activity' | 'settings' | 'profile'
 type CartItem = { key: string; productId: string; name: string; category: CategoryId; variant: string; price: number; sugar: string; addons: string[]; quantity: number; imageData?: string }
-type Transaction = { id: string; date: string; items: CartItem[]; total: number; method: string; cashier: string; reference?: string; discount: number; customerId?: string; customerName?: string; customerPhone?: string; customerEmail?: string; customerAddress?: string; buyerId?: string; source?: 'buyer'; status?: 'Pending' | 'Accepted' | 'Declined' }
+type Transaction = { id: string; date: string; items: CartItem[]; total: number; method: string; cashier: string; reference?: string; discount: number; customerId?: string; customerName?: string; customerPhone?: string; customerEmail?: string; customerAddress?: string; fulfillmentType?: FulfillmentType; buyerId?: string; source?: 'buyer'; status?: 'Pending' | 'Accepted' | 'Declined' }
 type StockItem = { id: string; name: string; quantity: number; unit: string; low: number }
 type StockMovement = { id: string; date: string; itemId: string; itemName: string; action: 'Restock' | 'Adjustment' | 'Sale' | 'Deleted'; change: number; balance: number; actor: string }
 type Customer = { id: string; name: string; phone: string; email: string; notes: string; active: boolean; accountId?: string; accountStatus?: 'active' | 'blocked' | 'deleted' }
@@ -127,6 +128,10 @@ function App() {
   const [buyerPhone, setBuyerPhone] = useState(storedBuyerPhone)
   const [buyerEmail, setBuyerEmail] = useState(storedBuyerEmail)
   const [buyerAddress, setBuyerAddress] = useState(storedBuyerAddress)
+  const [buyerFulfillment, setBuyerFulfillment] = useState<FulfillmentType>('Dine in')
+  const [buyerPaymentMethod, setBuyerPaymentMethod] = useState<PaymentMethod>('Cash')
+  const [buyerDeliveryAddress, setBuyerDeliveryAddress] = useState(storedBuyerAddress)
+  const [buyerGcashReference, setBuyerGcashReference] = useState('')
   const [buyerId] = useState(() => {
     const stored = localStorage.getItem('ss-buyer-id')
     if (stored) return stored
@@ -156,7 +161,7 @@ function App() {
   const [payment, setPayment] = useState<PaymentMethod>('Cash')
   const [cashReceived, setCashReceived] = useState('')
   const [receipt, setReceipt] = useState<Transaction | null>(null)
-  const [modal, setModal] = useState<'product' | 'payment' | 'staff' | 'stock' | 'discount' | 'login' | 'new-product' | 'customer' | null>(null)
+  const [modal, setModal] = useState<'product' | 'payment' | 'staff' | 'stock' | 'discount' | 'login' | 'new-product' | 'customer' | null>(() => isCustomerPortal && !user ? 'login' : null)
   const [editProduct, setEditProduct] = useState<Product | null>(null)
   const [newStaffName, setNewStaffName] = useState('')
   const [newStaffRole, setNewStaffRole] = useState<Role>('Cashier')
@@ -426,29 +431,45 @@ function App() {
     if (saleMovements.length) setStockMovements((items) => [...saleMovements, ...items].slice(0, 500))
     setView('orders')
   }
-  const submitBuyerOrder = () => {
+  const checkoutBuyerOrder = () => {
     if (!cart.length) return notify('Add something delicious to your order first.')
     if (!user.trim()) return notify('Please sign in again before placing your order.')
+    setBuyerFulfillment('Dine in')
+    setBuyerPaymentMethod('Cash')
+    setBuyerDeliveryAddress(buyerAddress)
+    setBuyerGcashReference('')
+    setModal('payment')
+  }
+  const submitBuyerOrder = () => {
+    if (buyerFulfillment === 'Delivery' && buyerDeliveryAddress.trim().length < 8) return notify('Enter a complete delivery address.')
+    if (buyerPaymentMethod === 'GCash' && buyerGcashReference.trim().length < 4) return notify('Enter the GCash reference number to continue.')
     const order: Transaction = {
       id: `WEB-${Date.now().toString().slice(-8)}`,
       date: new Date().toISOString(),
       items: cart,
       total,
-      method: 'Pay at store',
+      method: buyerPaymentMethod,
+      reference: buyerPaymentMethod === 'GCash' ? buyerGcashReference.trim() : undefined,
       cashier: 'Online order',
       discount: 0,
       customerName: user,
       customerPhone: buyerPhone || undefined,
       customerEmail: buyerEmail || undefined,
-      customerAddress: buyerAddress || undefined,
+      customerAddress: buyerFulfillment === 'Delivery' ? buyerDeliveryAddress.trim() : undefined,
+      fulfillmentType: buyerFulfillment,
       buyerId,
       source: 'buyer',
       status: 'Pending',
+    }
+    if (buyerFulfillment === 'Delivery') {
+      setBuyerAddress(buyerDeliveryAddress.trim())
+      localStorage.setItem('ss-buyer-address', buyerDeliveryAddress.trim())
     }
     knownBuyerOrderIds.current.add(order.id)
     knownBuyerOrderStatuses.current.set(order.id, 'Pending')
     setTransactions((items) => [order, ...items])
     setCart([])
+    setModal(null)
     setView('orders')
     notify('Order placed! We’ll let you know when the shop responds.')
   }
@@ -668,11 +689,11 @@ function App() {
     <div className="welcome-grain" />
     <div className="welcome-content"><div className="sparkle sparkle-a">✦</div><div className="sparkle sparkle-b">✧</div>
       <LogoMark />
-      <p className="welcome-eyebrow">{isCustomerPortal ? 'CUSTOMER PORTAL' : 'YOUR NEIGHBORHOOD SIP STOP'}</p>
+      <p className="welcome-eyebrow">{isCustomerPortal ? 'CUSTOMER LOGIN' : 'YOUR NEIGHBORHOOD SIP STOP'}</p>
       <h1>{isCustomerPortal ? <>Order something<br /><em>lovely.</em></> : <>Good things<br /><em>are brewing.</em></>}</h1>
       <p className="welcome-copy">{isCustomerPortal ? 'Browse the menu, place an order, and follow its status.' : 'Made with love, just for you.'}</p>
       <button className="welcome-button" onClick={() => { setLoginName(''); setLoginStage(isCustomerPortal ? 'buyer' : 'roles'); setModal('login') }}>{isCustomerPortal ? 'Customer login' : 'Staff sign in'} <ArrowRight size={17} /></button>
-      {!isCustomerPortal && <a className="customer-portal-link" href="/customer.html">Go to customer portal <ArrowRight size={13} /></a>}
+      {!isCustomerPortal && <a className="customer-portal-link" href="/customer.html?login=1">Customer login <ArrowRight size={13} /></a>}
       <div className="welcome-contact"><span>[redacted-phone]</span><span>@shotsandsparkles</span></div>
       <div className="welcome-footer">HANDCRAFTED DAILY <i>·</i> SHARED WITH JOY</div>
     </div>
@@ -696,7 +717,7 @@ function App() {
         <label className="form-label">Cashier name<input autoComplete="name" value={loginName} onChange={(event) => setLoginName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submitCashierSignIn() }} placeholder="Enter your full name" /></label>
         <button className="primary-button full-width" onClick={submitCashierSignIn}>Continue to POS <ArrowRight size={15} /></button>
       </>}
-      {isCustomerPortal && loginStage === 'buyer' && <><button className="back-link" onClick={() => setModal(null)}><ArrowRight size={14} /> Back to portal</button><h2>Customer login</h2><p>Enter your name and mobile number to continue.</p>
+      {isCustomerPortal && loginStage === 'buyer' && <><h2>Customer login</h2><p>Enter your name and mobile number to continue.</p>
         <form onSubmit={(event) => { event.preventDefault(); submitBuyerSignIn() }}>
           <label className="form-label">Your name<input autoComplete="name" value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="Enter your name" required minLength={2} /></label>
           <label className="form-label">Mobile number<input type="tel" autoComplete="tel" inputMode="tel" value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} placeholder="09xx xxx xxxx" required /></label>
@@ -733,7 +754,7 @@ function App() {
         </div>
       </header>
       <div className="page-content">
-        {view === 'pos' && role === 'Buyer' && <BuyerStore products={visibleProducts} category={category} search={search} cart={cart} subtotal={subtotal} tax={tax} total={total} connectionNotice={!syncEndpoint ? 'Preview mode: your orders are shared with the admin only on this device. Set up cloud sync before inviting customers on other devices.' : !isOnline ? 'You’re offline. New orders will stay on this device until your connection returns.' : syncStatus === 'error' ? 'The shop connection is having trouble. Your order may not have reached the team yet; try syncing again.' : ''} onCategoryChange={setCategory} onSearchChange={setSearch} onStartOrder={startOrder} onQuantityChange={updateQuantity} onClearCart={() => setCart([])} onSubmitOrder={submitBuyerOrder} onViewOrders={() => setView('orders')} onViewCart={() => document.getElementById('buyer-cart')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} />}
+        {view === 'pos' && role === 'Buyer' && <BuyerStore products={visibleProducts} category={category} search={search} cart={cart} subtotal={subtotal} tax={tax} total={total} connectionNotice={!syncEndpoint ? 'Preview mode: your orders are shared with the admin only on this device. Set up cloud sync before inviting customers on other devices.' : !isOnline ? 'You’re offline. New orders will stay on this device until your connection returns.' : syncStatus === 'error' ? 'The shop connection is having trouble. Your order may not have reached the team yet; try syncing again.' : ''} onCategoryChange={setCategory} onSearchChange={setSearch} onStartOrder={startOrder} onQuantityChange={updateQuantity} onClearCart={() => setCart([])} onSubmitOrder={checkoutBuyerOrder} onViewOrders={() => setView('orders')} onViewCart={() => document.getElementById('buyer-cart')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} />}
         {view === 'orders' && role === 'Buyer' && <BuyerOrderHistory orders={buyerOrders} onShop={() => setView('pos')} />}
         {view === 'profile' && role === 'Buyer' && <BuyerProfilePage
           name={buyerProfileName}
@@ -804,7 +825,7 @@ function App() {
               <div className="incoming-order-main"><div className="incoming-customer"><span className="person-avatar">{(order.customerName || 'C').charAt(0).toUpperCase()}</span><div><b>{order.customerName || 'Customer'}</b><span>{order.customerPhone || order.customerEmail || 'Online customer'} · {new Date(order.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div></div><span className="incoming-order-total">{money(order.total)}</span></div>
               {(order.customerEmail || order.customerAddress) && <div className="incoming-contact-details">{order.customerEmail && <span><Mail size={12} /> {order.customerEmail}</span>}{order.customerAddress && <span><MapPin size={12} /> {order.customerAddress}</span>}</div>}
               <div className="incoming-order-lines">{order.items.map((item, index) => <div key={`${order.id}-${index}`}><span>{item.quantity} × {item.name} <small>{item.variant} · {item.sugar} sugar{item.addons.length ? ` · ${item.addons.join(', ')}` : ''}</small></span><b>{money(item.price * item.quantity)}</b></div>)}</div>
-              <div className="incoming-order-actions"><span><CreditCard size={14} /> Pay in-store · {order.id}</span><div><button className="decline-order-button" onClick={() => setBuyerOrderStatus(order.id, 'Declined')}><X size={14} /> Decline</button><button className="accept-order-button" onClick={() => setBuyerOrderStatus(order.id, 'Accepted')}><Check size={15} /> Accept order</button></div></div>
+              <div className="incoming-order-actions"><span><CreditCard size={14} /> {order.fulfillmentType || 'Dine in'} · {order.method}{order.reference ? ` · Ref ${order.reference}` : ''} · {order.id}</span><div><button className="decline-order-button" onClick={() => setBuyerOrderStatus(order.id, 'Declined')}><X size={14} /> Decline</button><button className="accept-order-button" onClick={() => setBuyerOrderStatus(order.id, 'Accepted')}><Check size={15} /> Accept order</button></div></div>
             </article>)}</div>
           </section>}
           <div className="metric-grid"><Metric label="Today's sales" value={money(visibleTodayTransactions.reduce((sum, item) => sum + item.total, 0))} change={`${visibleTodayTransactions.length} completed orders today`} icon={Wallet} tone="green" /><Metric label={role === 'Manager' ? 'All orders' : 'Your transactions'} value={String(visibleTransactions.length).padStart(2, '0')} change={pendingBuyerOrders.length ? `${pendingBuyerOrders.length} awaiting response` : 'Saved on this device'} icon={FileText} tone="gold" /></div>
@@ -823,7 +844,8 @@ function App() {
 
     {modal === 'product' && selected && <div className="overlay" onClick={() => setModal(null)}><div className="dialog customize-dialog" onClick={(event) => event.stopPropagation()}><button className="icon-button dialog-close" onClick={() => setModal(null)} aria-label="Close"><X size={18} /></button><span className={`customize-art color-${selected.category}`}><div className="drink-illustration"><span className="drink-lid" /><span className="drink-straw" /><span className="drink-liquid" /><span className="drink-label">S<span>&</span>S</span></div></span><div className="customize-heading"><span className="eyebrow">{categoriesLabels[selected.category]}</span><h2>{selected.name}</h2><p>Make it just the way you like it.</p></div><div className="option-block"><div className="option-title"><b>Choose your size</b><span>Required</span></div><div className="variant-options">{selected.variants.map((variant, index) => <button className={variantIndex === index ? 'picked' : ''} key={variant.name} onClick={() => setVariantIndex(index)}><span>{variant.name}</span><b>{money(variant.price + addons.length * 10)}</b></button>)}</div></div>{selected.category !== 'dessert' && <><div className="option-block"><div className="option-title"><b>Sugar level</b><span>{sugar}</span></div><div className="sugar-options">{['0%', '25%', '50%', '75%', '100%'].map((level) => <button className={sugar === level ? 'picked' : ''} key={level} onClick={() => setSugar(level)}>{level}</button>)}</div></div><div className="option-block"><div className="option-title"><b>A little extra</b><span>₱10 each</span></div><div className="addon-options">{['Extra shot', 'Cream'].map((addon) => <button className={addons.includes(addon) ? 'picked' : ''} key={addon} onClick={() => setAddons((items) => items.includes(addon) ? items.filter((item) => item !== addon) : [...items, addon])}><span className="checkbox">{addons.includes(addon) && <Check size={12} />}</span>{addon}</button>)}</div></div></>}<button className="checkout-button add-button" onClick={addToCart}><span><Plus size={17} /> Add to order</span><b>{money(selected.variants[variantIndex].price + addons.length * 10)}</b></button></div></div>}
 
-    {modal === 'payment' && <div className="overlay" onClick={() => setModal(null)}><div className="dialog payment-dialog" onClick={(event) => event.stopPropagation()}><button className="icon-button dialog-close" onClick={() => setModal(null)} aria-label="Close"><X size={18} /></button><span className="eyebrow">ALMOST THERE</span><h2>Take payment</h2><p className="dialog-description">A lovely order, coming right up.</p><div className="payment-total"><span>Total due</span><b>{money(total)}</b></div><div className="payment-methods">{(['Cash', 'GCash'] as const).map((method) => <button className={payment === method ? 'selected' : ''} onClick={() => setPayment(method)} key={method}>{method === 'Cash' ? <BanknoteIcon /> : <Wallet size={17} />}{method}</button>)}</div>{payment === 'Cash' ? <><label className="form-label">Cash received<input type="number" min={total} placeholder="Enter amount in ₱" value={cashReceived} onChange={(event) => setCashReceived(event.target.value)} /></label><div className="change-line"><span>Change</span><b>{money(Math.max(0, Number(cashReceived || 0) - total))}</b></div><div className="quick-cash">{[Math.ceil(total / 50) * 50, Math.ceil(total / 100) * 100, Math.ceil(total / 500) * 500].filter((amount, index, list) => list.indexOf(amount) === index).map((amount) => <button key={amount} onClick={() => setCashReceived(String(amount))}>{money(amount)}</button>)}</div></> : <div className="gcash-payment"><QRCodeSVG className="gcash-qr-code" value={gcashNumber} size={240} level="H" includeMargin /></div>}<button className="checkout-button complete-button" onClick={completeSale}><span><Check size={17} /> Complete sale</span><b>{money(total)}</b></button></div></div>}
+    {modal === 'payment' && role === 'Buyer' && <div className="overlay" onClick={() => setModal(null)}><div className="dialog payment-dialog buyer-checkout-dialog" onClick={(event) => event.stopPropagation()}><button className="icon-button dialog-close" onClick={() => setModal(null)} aria-label="Close"><X size={18} /></button><span className="eyebrow">A FEW LITTLE DETAILS</span><h2>Finish your order</h2><p className="dialog-description">Choose how you’ll enjoy your order and how you’ll pay.</p><div className="payment-total"><span>Total</span><b>{money(total)}</b></div><span className="form-label">How would you like your order?</span><div className="payment-methods">{(['Dine in', 'Delivery'] as const).map((fulfillment) => <button type="button" className={buyerFulfillment === fulfillment ? 'selected' : ''} onClick={() => setBuyerFulfillment(fulfillment)} key={fulfillment}>{fulfillment === 'Dine in' ? <Coffee size={17} /> : <MapPin size={17} />}{fulfillment}</button>)}</div>{buyerFulfillment === 'Delivery' && <label className="form-label">Delivery address<input autoComplete="street-address" value={buyerDeliveryAddress} onChange={(event) => setBuyerDeliveryAddress(event.target.value)} placeholder="Street, barangay, city" required minLength={8} /></label>}<span className="form-label">Payment method</span><div className="payment-methods">{(['Cash', 'GCash'] as const).map((method) => <button type="button" className={buyerPaymentMethod === method ? 'selected' : ''} onClick={() => setBuyerPaymentMethod(method)} key={method}>{method === 'Cash' ? <BanknoteIcon /> : <Wallet size={17} />}{method}</button>)}</div>{buyerPaymentMethod === 'GCash' && <><div className="gcash-payment"><QRCodeSVG className="gcash-qr-code" value={gcashNumber} size={180} level="H" includeMargin /><span>Send payment to GCash {gcashNumber}, then enter your reference number.</span></div><label className="form-label">GCash reference number<input value={buyerGcashReference} onChange={(event) => setBuyerGcashReference(event.target.value)} placeholder="Enter the reference number" required minLength={4} /></label></>}<button className="checkout-button complete-button" onClick={submitBuyerOrder}><span><Check size={17} /> Place order</span><b>{money(total)}</b></button></div></div>}
+    {modal === 'payment' && role !== 'Buyer' && <div className="overlay" onClick={() => setModal(null)}><div className="dialog payment-dialog" onClick={(event) => event.stopPropagation()}><button className="icon-button dialog-close" onClick={() => setModal(null)} aria-label="Close"><X size={18} /></button><span className="eyebrow">ALMOST THERE</span><h2>Take payment</h2><p className="dialog-description">A lovely order, coming right up.</p><div className="payment-total"><span>Total due</span><b>{money(total)}</b></div><div className="payment-methods">{(['Cash', 'GCash'] as const).map((method) => <button className={payment === method ? 'selected' : ''} onClick={() => setPayment(method)} key={method}>{method === 'Cash' ? <BanknoteIcon /> : <Wallet size={17} />}{method}</button>)}</div>{payment === 'Cash' ? <><label className="form-label">Cash received<input type="number" min={total} placeholder="Enter amount in ₱" value={cashReceived} onChange={(event) => setCashReceived(event.target.value)} /></label><div className="change-line"><span>Change</span><b>{money(Math.max(0, Number(cashReceived || 0) - total))}</b></div><div className="quick-cash">{[Math.ceil(total / 50) * 50, Math.ceil(total / 100) * 100, Math.ceil(total / 500) * 500].filter((amount, index, list) => list.indexOf(amount) === index).map((amount) => <button key={amount} onClick={() => setCashReceived(String(amount))}>{money(amount)}</button>)}</div></> : <div className="gcash-payment"><QRCodeSVG className="gcash-qr-code" value={gcashNumber} size={240} level="H" includeMargin /></div>}<button className="checkout-button complete-button" onClick={completeSale}><span><Check size={17} /> Complete sale</span><b>{money(total)}</b></button></div></div>}
 
     {modal === 'discount' && <div className="overlay" onClick={() => setModal(null)}><div className="dialog compact-dialog" onClick={(event) => event.stopPropagation()}><button className="icon-button dialog-close" onClick={() => setModal(null)} aria-label="Close"><X size={18} /></button><span className="eyebrow">A LITTLE SOMETHING EXTRA</span><h2>Apply a discount</h2><p className="dialog-description">Senior and PWD discounts, promo codes, or a custom amount.</p><div className="discount-presets"><button onClick={() => { setDiscount(Math.round(subtotal * 0.2 * 100) / 100); setModal(null) }}>Senior / PWD · 20%<ArrowRight size={15} /></button></div><label className="form-label">Custom discount in PHP<input type="number" min="0" max={subtotal} value={customDiscount} onChange={(event) => setCustomDiscount(event.target.value)} placeholder="Enter amount" /></label><button className="outline-button full-width" onClick={() => { const amount = Number(customDiscount); if (amount > 0) { setDiscount(Math.min(amount, subtotal)); setCustomDiscount(''); setModal(null) } else notify('Enter a valid discount amount.') }}>Apply custom amount</button><label className="form-label">Promo code<input placeholder="e.g. SPARKLE10" value={promo} onChange={(event) => setPromo(event.target.value.toUpperCase())} /></label><button className="primary-button full-width" onClick={() => { if (promo === 'SPARKLE10') { setDiscount(Math.round(subtotal * 0.1 * 100) / 100); setModal(null) } else notify('That promo code is not valid.') }}>Apply promo</button></div></div>}
 
@@ -975,7 +997,7 @@ function BuyerStore({ products, category, search, cart, subtotal, tax, total, co
       <aside className="buyer-cart-card" id="buyer-cart">
         <div className="buyer-cart-heading"><div><span className="eyebrow">YOUR LITTLE LINEUP</span><h2>Your bag <span>{cart.reduce((quantity, item) => quantity + item.quantity, 0)}</span></h2></div><ShoppingBag size={21} /></div>
         {cart.length ? <><div className="buyer-cart-items">{cart.map((item) => <div className="buyer-cart-item" key={item.key}><div className={`buyer-cart-thumb color-${item.category}`}>{item.imageData ? <img src={item.imageData} alt="" /> : <Coffee size={18} />}</div><div className="buyer-cart-detail"><b>{item.name}</b><span>{item.variant} · {item.sugar} sugar{item.addons.length ? ` · ${item.addons.join(', ')}` : ''}</span><strong>{money(item.price * item.quantity)}</strong><div className="buyer-quantity"><button onClick={() => onQuantityChange(item.key, -1)} aria-label="Remove one"><Minus size={12} /></button><span>{item.quantity}</span><button onClick={() => onQuantityChange(item.key, 1)} aria-label="Add one"><Plus size={12} /></button></div></div></div>)}</div>
-          <button className="buyer-clear" onClick={onClearCart}>Clear bag</button><div className="buyer-total-lines"><div><span>Subtotal</span><b>{money(subtotal)}</b></div><div><span>VAT <small>12%</small></span><b>{money(tax)}</b></div><div className="buyer-total"><span>Total</span><strong>{money(total)}</strong></div></div><button className="buyer-place-order" onClick={onSubmitOrder}><span>Place my order <ArrowRight size={17} /></span><b>{money(total)}</b></button><p className="buyer-pay-note"><ShieldCheck size={14} /> Pay in-store after your order is accepted.</p>
+          <button className="buyer-clear" onClick={onClearCart}>Clear bag</button><div className="buyer-total-lines"><div><span>Subtotal</span><b>{money(subtotal)}</b></div><div><span>VAT <small>12%</small></span><b>{money(tax)}</b></div><div className="buyer-total"><span>Total</span><strong>{money(total)}</strong></div></div><button className="buyer-place-order" onClick={onSubmitOrder}><span>Place my order <ArrowRight size={17} /></span><b>{money(total)}</b></button><p className="buyer-pay-note"><ShieldCheck size={14} /> Choose dine-in or delivery and payment at checkout.</p>
         </> : <div className="buyer-cart-empty"><div><ShoppingBag size={23} /></div><b>Something lovely starts here.</b><span>Add a drink or treat to your bag.</span><button onClick={onViewOrders}>Track my orders <ArrowRight size={14} /></button></div>}
       </aside>
     </div>
@@ -999,10 +1021,13 @@ function BuyerOrderHistory({ orders, onShop }: { orders: Transaction[]; onShop: 
     {orders.length > 0 && <div className="buyer-order-filters" aria-label="Filter order history">{filterOptions.filter((option) => option.id === 'all' || option.count > 0).map((option) => <button key={option.id} className={filter === option.id ? 'selected' : ''} aria-pressed={filter === option.id} onClick={() => setFilter(option.id)}>{option.label}<span>{option.count}</span></button>)}</div>}
     {filteredOrders.length ? <div className="buyer-order-list">{filteredOrders.map((order) => {
       const status = orderStatus(order)
+      const itemCount = order.items.reduce((quantity, item) => quantity + item.quantity, 0)
       return <article className="buyer-order-card" key={order.id}>
         <div className="buyer-order-card-top"><div><span className="eyebrow">ORDER {order.id}</span><small>{new Date(order.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</small></div><span className={`buyer-status status-${status.toLowerCase()}`}>{status === 'Pending' && <i />}{status === 'Accepted' && <Check size={13} />}{status === 'Declined' && <X size={13} />}{status === 'Pending' ? 'Waiting for the shop' : status === 'Accepted' ? 'Accepted' : 'Not accepted'}</span></div>
         <div className="buyer-order-items">{order.items.map((item, index) => <div key={`${order.id}-${index}`}><span>{item.quantity} × {item.name} <small>{item.variant}</small></span><b>{money(item.price * item.quantity)}</b></div>)}</div>
-        <div className="buyer-order-card-bottom"><span>Pay in-store · {order.items.reduce((quantity, item) => quantity + item.quantity, 0)} items</span><strong>{money(order.total)}</strong></div>
+        <div className="buyer-order-card-bottom"><span>{order.fulfillmentType || 'Dine in'} · {order.method} · {itemCount} {itemCount === 1 ? 'item' : 'items'}</span><strong>{money(order.total)}</strong></div>
+        {order.reference && <div className="buyer-order-message"><CreditCard size={14} /> GCash reference: {order.reference}</div>}
+        {order.customerAddress && <div className="buyer-order-message"><MapPin size={14} /> Delivery to: {order.customerAddress}</div>}
         {status === 'Pending' && <div className="buyer-order-message"><Clock3 size={15} /> Your order is with the shop. Check back soon for an update.</div>}
         {status === 'Accepted' && <div className="buyer-order-message accepted"><Sparkles size={15} /> It’s a yes! The team is getting your order ready.</div>}
         {status === 'Declined' && <div className="buyer-order-message declined"><CircleHelp size={15} /> The shop couldn’t accept this order. Please contact the team or try again.</div>}
