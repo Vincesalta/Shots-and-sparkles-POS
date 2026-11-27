@@ -266,7 +266,9 @@ const serveApp = async (request, response, pathname) => {
     const content = await readFile(filePath)
     response.writeHead(200, {
       'Content-Type': contentTypes.get(extname(filePath)) || 'application/octet-stream',
-      'Cache-Control': extname(filePath) === '.html' ? 'no-cache' : 'public, max-age=3600',
+      'Cache-Control': extname(filePath) === '.html' || extname(filePath) === '.webmanifest' || filePath === resolve(dist, 'sw.js')
+        ? 'no-cache, must-revalidate'
+        : 'public, max-age=3600',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
     })
