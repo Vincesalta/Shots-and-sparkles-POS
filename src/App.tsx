@@ -13,9 +13,11 @@ import './App.css'
 type Role = 'Manager' | 'Cashier'
 type AuthSession = { user: string; role: Role; lastActivityAt: number }
 type PaymentMethod = 'Cash' | 'GCash'
+type FulfillmentType = 'Dine in' | 'Delivery'
+type BuyerOrderStatus = 'Pending' | 'Preparing' | 'Ready' | 'OutForDelivery' | 'Completed' | 'Accepted' | 'Declined'
 type View = 'pos' | 'dashboard' | 'products' | 'inventory' | 'customers' | 'orders' | 'staff' | 'reports' | 'activity' | 'settings'
 type CartItem = { key: string; productId: string; name: string; category: CategoryId; variant: string; price: number; sugar: string; addons: string[]; quantity: number; imageData?: string }
-type Transaction = { id: string; date: string; items: CartItem[]; total: number; method: string; cashier: string; reference?: string; discount: number; customerId?: string; customerName?: string; customerPhone?: string; customerEmail?: string; customerAddress?: string; buyerId?: string; source?: 'buyer'; status?: 'Pending' | 'Accepted' | 'Declined' }
+type Transaction = { id: string; date: string; items: CartItem[]; total: number; method: string; cashier: string; reference?: string; discount: number; customerId?: string; customerName?: string; customerPhone?: string; customerEmail?: string; customerAddress?: string; fulfillmentType?: FulfillmentType; buyerId?: string; source?: 'buyer'; status?: BuyerOrderStatus; handledBy?: string }
 type HeldOrder = { id: string; label: string; createdAt: string; items: CartItem[]; discount: number; customerId: string }
 type StockItem = { id: string; name: string; quantity: number; unit: string; low: number }
 type StockMovement = { id: string; date: string; itemId: string; itemName: string; action: 'Restock' | 'Adjustment' | 'Sale' | 'Deleted'; change: number; balance: number; actor: string }
@@ -26,6 +28,8 @@ type GoogleIdentityApi = { accounts: { id: { initialize: (options: { client_id: 
 declare global { interface Window { google?: GoogleIdentityApi } }
 const categoriesLabels = Object.fromEntries(categories.map((category) => [category.id, category.shortLabel])) as Record<CategoryId, string>
 const sameLocalDay = (date: string, reference: Date) => new Date(date).toDateString() === reference.toDateString()
+const isCompletedSale = (transaction: Transaction) => transaction.source !== 'buyer' || !transaction.status || transaction.status === 'Accepted' || transaction.status === 'Completed'
+const isActiveBuyerOrder = (transaction: Transaction) => transaction.source === 'buyer' && ['Preparing', 'Ready', 'OutForDelivery'].includes(transaction.status || '')
 const isWithinPeriod = (date: string, start: Date, end: Date) => new Date(date) >= start && new Date(date) <= end
 const periodStart = (reference: Date, range: 'daily' | 'weekly' | 'monthly') => {
   const start = new Date(reference)
@@ -175,7 +179,7 @@ function App() {
   const [adminCodeBusy, setAdminCodeBusy] = useState(false)
   const adminPasswordSignInInFlight = useRef(false)
   const knownBuyerOrderIds = useRef(new Set<string>())
-  const handledBuyerOrderIds = useRef(new Set<string>())
+  const handledBuyerOrderActions = useRef(new Set<string>())
   const [newProductName, setNewProductName] = useState('')
   const [newProductPrice, setNewProductPrice] = useState('60')
   const [newProductCategory, setNewProductCategory] = useState<CategoryId>('coffee')
@@ -256,15 +260,15 @@ function App() {
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
   const tax = Math.round(subtotal * 0.12 * 100) / 100
   const total = Math.max(0, subtotal + tax - discount)
-  const completedTransactions = transactions.filter((item) => item.status !== 'Pending' && item.status !== 'Declined')
+  const completedTransactions = transactions.filter(isCompletedSale)
   const todayTransactions = completedTransactions.filter((item) => sameLocalDay(item.date, now))
   const todaySales = todayTransactions.reduce((sum, item) => sum + item.total, 0)
   const visibleTransactions = role === 'Manager' ? transactions : transactions.filter((item) => item.cashier === user)
-  const visibleTodayTransactions = visibleTransactions.filter((item) => item.status !== 'Pending' && item.status !== 'Declined' && sameLocalDay(item.date, now))
+  const visibleTodayTransactions = visibleTransactions.filter((item) => isCompletedSale(item) && sameLocalDay(item.date, now))
   const selectedPeriodStart = reportRange === 'custom' ? new Date(`${reportFrom}T00:00:00`) : periodStart(now, reportRange)
   const selectedPeriodEnd = reportRange === 'custom' ? new Date(`${reportTo}T23:59:59.999`) : now
   const isValidReportPeriod = Number.isFinite(selectedPeriodStart.getTime()) && Number.isFinite(selectedPeriodEnd.getTime()) && selectedPeriodStart <= selectedPeriodEnd
-  const periodTransactions = visibleTransactions.filter((item) => item.status !== 'Pending' && item.status !== 'Declined' && isValidReportPeriod && isWithinPeriod(item.date, selectedPeriodStart, selectedPeriodEnd))
+  const periodTransactions = visibleTransactions.filter((item) => isCompletedSale(item) && isValidReportPeriod && isWithinPeriod(item.date, selectedPeriodStart, selectedPeriodEnd))
   const reportPeriodLabel = reportRange === 'custom' ? `${reportFrom} to ${reportTo}` : reportRange
   const periodSales = periodTransactions.reduce((sum, item) => sum + item.total, 0)
   const lowStock = stock.filter((item) => item.quantity <= item.low)
@@ -275,6 +279,7 @@ function App() {
   const selectedCustomer = customers.find((customer) => customer.id === currentCustomerId && customer.active)
   const selectedAddOnTotal = addons.reduce((sum, name) => sum + (addOns.find((item) => item.name === name)?.price || 0), 0)
   const pendingBuyerOrders = transactions.filter((transaction) => transaction.source === 'buyer' && transaction.status === 'Pending')
+  const activeBuyerOrders = transactions.filter(isActiveBuyerOrder).sort((first, second) => first.date.localeCompare(second.date))
   const appendStockMovement = (item: StockItem, change: number, action: StockMovement['action']) => setStockMovements((items) => [{
     id: `move-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     date: new Date().toISOString(),
@@ -340,23 +345,47 @@ function App() {
 
     return () => window.clearTimeout(timer)
   }, [isOnline, syncAttempt, snapshotFingerprint, snapshotIsSynced, products, transactions, stock, stockMovements, customers, staff, audit])
+  useEffect(() => {
+    const handleTransactionStorage = (event: StorageEvent) => {
+      if (event.key !== 'ss-transactions' || !event.newValue) return
+      try {
+        const nextTransactions = JSON.parse(event.newValue) as Transaction[]
+        if (!Array.isArray(nextTransactions)) throw new Error('Stored transactions are not a list.')
+        setTransactions(nextTransactions)
+      } catch (error) {
+        console.error('Unable to read customer order updates:', error)
+      }
+    }
+    window.addEventListener('storage', handleTransactionStorage)
+    return () => window.removeEventListener('storage', handleTransactionStorage)
+  }, [])
   const addAudit = (message: string) => setAudit((items) => [`${currentTimestamp()} · ${user || 'System'} · ${message}`, ...items].slice(0, 100))
   const notify = (message: string) => { setNotification(message); window.setTimeout(() => setNotification(''), 2500) }
   useEffect(() => {
-    if (!user || role !== 'Manager') return
+    if (!user) return
     for (const transaction of pendingBuyerOrders) {
       if (knownBuyerOrderIds.current.has(transaction.id)) continue
       knownBuyerOrderIds.current.add(transaction.id)
       notify(`New customer order from ${transaction.customerName || 'a customer'} · ${money(transaction.total)}`)
     }
-  }, [pendingBuyerOrders, role, user])
-  const setBuyerOrderStatus = (id: string, status: 'Accepted' | 'Declined') => {
+  }, [pendingBuyerOrders, user])
+  const setBuyerOrderStatus = (id: string, status: BuyerOrderStatus) => {
     const order = transactions.find((transaction) => transaction.id === id)
-    if (!user || role !== 'Manager' || !order || order.source !== 'buyer' || order.status !== 'Pending' || handledBuyerOrderIds.current.has(id)) return
-    handledBuyerOrderIds.current.add(id)
-    setTransactions((items) => items.map((item) => item.id === id ? { ...item, status } : item))
+    if (!user || !order || order.source !== 'buyer') return
+    const validTransition =
+      (order.status === 'Pending' && (status === 'Preparing' || status === 'Declined')) ||
+      (order.status === 'Preparing' && ((order.fulfillmentType === 'Delivery' && status === 'OutForDelivery') || (order.fulfillmentType !== 'Delivery' && status === 'Ready'))) ||
+      ((order.status === 'Ready' || order.status === 'OutForDelivery') && status === 'Completed')
+    const actionKey = `${id}:${status}`
+    if (!validTransition || handledBuyerOrderActions.current.has(actionKey)) return
+    handledBuyerOrderActions.current.add(actionKey)
+    setTransactions((items) => items.map((item) => item.id === id ? {
+      ...item,
+      status,
+      ...(status === 'Preparing' ? { handledBy: user } : {}),
+    } : item))
     addAudit(`${status} online order ${id} · ${money(order.total)}`)
-    if (status === 'Accepted') {
+    if (status === 'Preparing') {
       const nextStock = stock.map((stockItem) => {
         if (!stockItem.id.startsWith('cups-')) return stockItem
         const sizeKey = stockItem.id === 'cups-12' ? /small|12oz/i : stockItem.id === 'cups-16' ? /medium|16oz/i : /large|22oz/i
@@ -371,7 +400,12 @@ function App() {
       setStock(nextStock)
       if (movements.length) setStockMovements((items) => [...movements, ...items].slice(0, 500))
     }
-    notify(`Order ${id} ${status.toLowerCase()}.`)
+    const confirmation = status === 'Preparing' ? `Order ${id} accepted and moved to preparation.`
+      : status === 'Ready' ? `Order ${id} is ready for counter pickup.`
+        : status === 'OutForDelivery' ? `Order ${id} marked on the way.`
+          : status === 'Completed' ? `Order ${id} marked complete.`
+            : `Order ${id} declined.`
+    notify(confirmation)
   }
   const printReceipt = () => {
     const clearPrintMode = () => document.body.classList.remove('receipt-print-mode')
@@ -668,12 +702,25 @@ function App() {
   </div>
 
   return <div className="app-shell">
-    {user && role === 'Manager' && pendingBuyerOrders.length > 0 && <aside className="buyer-order-alert" aria-label="Incoming customer orders">
-      <div className="buyer-order-alert-heading"><Bell size={16} /><b>{pendingBuyerOrders.length} customer order{pendingBuyerOrders.length === 1 ? '' : 's'} waiting</b></div>
-      {pendingBuyerOrders.map((order) => <div className="buyer-order-alert-card" key={order.id}>
-        <div><b>{order.customerName || 'Customer'}</b><span>{order.customerPhone || order.customerEmail || 'Online order'} · {money(order.total)}</span></div>
-        <div className="buyer-order-alert-actions"><button type="button" onClick={() => setBuyerOrderStatus(order.id, 'Declined')}>Decline</button><button type="button" onClick={() => setBuyerOrderStatus(order.id, 'Accepted')}>Accept</button></div>
-      </div>)}
+    {user && (pendingBuyerOrders.length > 0 || activeBuyerOrders.length > 0) && <aside className="buyer-order-alert" aria-label="Customer order queue">
+      {pendingBuyerOrders.length > 0 && <>
+        <div className="buyer-order-alert-heading"><Bell size={16} /><b>{pendingBuyerOrders.length} new customer order{pendingBuyerOrders.length === 1 ? '' : 's'} waiting</b></div>
+        {pendingBuyerOrders.map((order) => <div className="buyer-order-alert-card" key={order.id}>
+          <div><b>{order.customerName || 'Customer'}</b><span>{order.fulfillmentType || 'Dine in'} · {order.customerPhone || order.customerEmail || 'Online order'} · {money(order.total)}</span></div>
+          <div className="buyer-order-alert-actions"><button type="button" onClick={() => setBuyerOrderStatus(order.id, 'Declined')}>Decline</button><button type="button" onClick={() => setBuyerOrderStatus(order.id, 'Preparing')}>Accept & prepare</button></div>
+        </div>)}
+      </>}
+      {activeBuyerOrders.length > 0 && <>
+        <div className="buyer-order-alert-heading active-order-alert-heading"><Bell size={16} /><b>{activeBuyerOrders.length} active order{activeBuyerOrders.length === 1 ? '' : 's'} · {user}</b></div>
+        {activeBuyerOrders.map((order) => {
+          const nextStatus: BuyerOrderStatus = order.status === 'Preparing' ? order.fulfillmentType === 'Delivery' ? 'OutForDelivery' : 'Ready' : 'Completed'
+          const nextAction = order.status === 'Preparing' ? order.fulfillmentType === 'Delivery' ? 'Mark on the way' : 'Mark ready for pickup' : order.status === 'Ready' ? 'Complete pickup' : 'Mark delivered'
+          return <div className="buyer-order-alert-card active-buyer-order-card" key={order.id}>
+            <div><b>{order.customerName || 'Customer'} · {order.status === 'Preparing' ? 'Preparing' : order.status === 'Ready' ? 'Ready for pickup' : 'On the way'}</b><span>{order.id} · {order.fulfillmentType || 'Dine in'} · {money(order.total)}</span></div>
+            <div className="buyer-order-alert-actions"><button type="button" onClick={() => setBuyerOrderStatus(order.id, nextStatus)}>{nextAction}</button></div>
+          </div>
+        })}
+      </>}
     </aside>}
     <aside className="sidebar">
       <div className="sidebar-brand"><LogoMark compact /><span className="brand-caption">STORE MANAGEMENT</span></div>
@@ -787,7 +834,7 @@ function SalesChart({ transactions, start, end, now }: { transactions: Transacti
   const bucketCount = Math.min(dayCount, 14)
   const span = Math.max(chartEnd.getTime() - chartStart.getTime() + 1, 1)
   const buckets = Array.from({ length: bucketCount }, (_, index) => ({ value: 0, from: new Date(chartStart.getTime() + span * index / bucketCount), to: new Date(chartStart.getTime() + span * (index + 1) / bucketCount - 1) }))
-  transactions.filter((transaction) => transaction.status !== 'Pending' && transaction.status !== 'Declined').forEach((transaction) => {
+  transactions.filter(isCompletedSale).forEach((transaction) => {
     const ratio = (new Date(transaction.date).getTime() - chartStart.getTime()) / span
     const index = Math.max(0, Math.min(bucketCount - 1, Math.floor(ratio * bucketCount)))
     if (Number.isFinite(ratio)) buckets[index].value += transaction.total
@@ -836,7 +883,7 @@ function HourlyOrdersChart({ transactions }: { transactions: Transaction[] }) {
 function ChartEmpty({ message }: { message: string }) { return <div className="report-chart-empty"><BarChart3 size={22} /><span>{message}</span></div> }
 function TopProducts({ transactions }: { transactions: Transaction[] }) {
   const counts = new Map<string, { quantity: number; name: string; category: CategoryId }>()
-  transactions.filter((transaction) => transaction.status !== 'Pending' && transaction.status !== 'Declined').forEach((transaction) => transaction.items.forEach((item) => { const current = counts.get(item.productId); counts.set(item.productId, { name: item.name, category: item.category, quantity: (current?.quantity || 0) + item.quantity }) }))
+  transactions.filter(isCompletedSale).forEach((transaction) => transaction.items.forEach((item) => { const current = counts.get(item.productId); counts.set(item.productId, { name: item.name, category: item.category, quantity: (current?.quantity || 0) + item.quantity }) }))
   const top = [...counts.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5)
   return top.length ? <div className="top-products">{top.map((item, index) => <div className="top-product" key={item.name}><span className={`rank rank-${index + 1}`}>{String(index + 1).padStart(2, '0')}</span><span className={`top-product-icon color-${item.category}`}><Coffee size={16} /></span><span><b>{item.name}</b><small>{categoriesLabels[item.category]}</small></span><strong>{item.quantity} sold</strong></div>)}</div> : <div className="empty-table"><ShoppingBag size={20} /><span>Completed orders will show your top picks.</span></div>
 }

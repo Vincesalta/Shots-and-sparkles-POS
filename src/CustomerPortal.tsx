@@ -17,7 +17,8 @@ type Theme = 'light' | 'dark'
 type AdminAccount = { email: string; passwordHash: string }
 type View = 'pos' | 'dashboard' | 'products' | 'inventory' | 'customers' | 'orders' | 'staff' | 'reports' | 'activity' | 'settings' | 'profile'
 type CartItem = { key: string; productId: string; name: string; category: CategoryId; variant: string; price: number; sugar: string; addons: string[]; quantity: number; imageData?: string }
-type Transaction = { id: string; date: string; items: CartItem[]; total: number; method: string; cashier: string; reference?: string; discount: number; customerId?: string; customerName?: string; customerPhone?: string; customerEmail?: string; customerAddress?: string; fulfillmentType?: FulfillmentType; buyerId?: string; source?: 'buyer'; status?: 'Pending' | 'Accepted' | 'Declined' }
+type BuyerOrderStatus = 'Pending' | 'Preparing' | 'Ready' | 'OutForDelivery' | 'Completed' | 'Accepted' | 'Declined'
+type Transaction = { id: string; date: string; items: CartItem[]; total: number; method: string; cashier: string; reference?: string; discount: number; customerId?: string; customerName?: string; customerPhone?: string; customerEmail?: string; customerAddress?: string; fulfillmentType?: FulfillmentType; buyerId?: string; source?: 'buyer'; status?: BuyerOrderStatus; handledBy?: string }
 type StockItem = { id: string; name: string; quantity: number; unit: string; low: number }
 type StockMovement = { id: string; date: string; itemId: string; itemName: string; action: 'Restock' | 'Adjustment' | 'Sale' | 'Deleted'; change: number; balance: number; actor: string }
 type Customer = { id: string; name: string; phone: string; email: string; notes: string; active: boolean; accountId?: string; accountStatus?: 'active' | 'blocked' | 'deleted' }
@@ -33,6 +34,8 @@ const periodStart = (reference: Date, range: 'daily' | 'weekly' | 'monthly') => 
   return start
 }
 const currentTimestamp = () => new Date().toLocaleString()
+const isCompletedSale = (transaction: Transaction) => transaction.source !== 'buyer' || !transaction.status || transaction.status === 'Accepted' || transaction.status === 'Completed'
+const isActiveBuyerOrder = (transaction: Transaction) => transaction.source === 'buyer' && ['Preparing', 'Ready', 'OutForDelivery'].includes(transaction.status || '')
 const gcashNumber = '09102733236'
 const syncEndpoint = import.meta.env.VITE_SYNC_API_URL?.trim() || ''
 const isCustomerApp = __CUSTOMER_APP__
@@ -244,11 +247,11 @@ function App() {
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
   const tax = Math.round(subtotal * 0.12 * 100) / 100
   const total = Math.max(0, subtotal + tax - discount)
-  const todayTransactions = transactions.filter((item) => item.status !== 'Pending' && item.status !== 'Declined' && sameLocalDay(item.date, now))
+  const todayTransactions = transactions.filter((item) => isCompletedSale(item) && sameLocalDay(item.date, now))
   const todaySales = todayTransactions.reduce((sum, item) => sum + item.total, 0)
   const visibleTransactions = role === 'Manager' ? transactions : role === 'Buyer' ? transactions.filter((item) => item.source === 'buyer' && item.buyerId === buyerId) : transactions.filter((item) => item.cashier === user)
-  const visibleTodayTransactions = visibleTransactions.filter((item) => item.status !== 'Pending' && item.status !== 'Declined' && sameLocalDay(item.date, now))
-  const periodTransactions = visibleTransactions.filter((item) => item.status !== 'Pending' && item.status !== 'Declined' && isWithinPeriod(item.date, periodStart(now, reportRange), now))
+  const visibleTodayTransactions = visibleTransactions.filter((item) => isCompletedSale(item) && sameLocalDay(item.date, now))
+  const periodTransactions = visibleTransactions.filter((item) => isCompletedSale(item) && isWithinPeriod(item.date, periodStart(now, reportRange), now))
   const periodSales = periodTransactions.reduce((sum, item) => sum + item.total, 0)
   const lowStock = stock.filter((item) => item.quantity <= item.low)
   const snapshotFingerprint = JSON.stringify({ products, transactions, stock, stockMovements, customers, staff, audit })
@@ -362,7 +365,22 @@ function App() {
   }, [buyerId, role, user])
 
   useEffect(() => {
-    if (role !== 'Manager') return
+    const handleTransactionStorage = (event: StorageEvent) => {
+      if (event.key !== 'ss-transactions' || !event.newValue) return
+      try {
+        const nextTransactions = JSON.parse(event.newValue) as Transaction[]
+        if (!Array.isArray(nextTransactions)) throw new Error('Stored transactions are not a list.')
+        setTransactions(nextTransactions)
+      } catch (error) {
+        console.error('Unable to read customer order updates:', error)
+      }
+    }
+    window.addEventListener('storage', handleTransactionStorage)
+    return () => window.removeEventListener('storage', handleTransactionStorage)
+  }, [])
+
+  useEffect(() => {
+    if (role === 'Buyer') return
     transactions.forEach((transaction) => {
       if (transaction.source !== 'buyer' || transaction.status !== 'Pending' || knownBuyerOrderIds.current.has(transaction.id)) return
       knownBuyerOrderIds.current.add(transaction.id)
@@ -376,7 +394,18 @@ function App() {
       const previousStatus = knownBuyerOrderStatuses.current.get(transaction.id)
       knownBuyerOrderStatuses.current.set(transaction.id, transaction.status)
       if (previousStatus && transaction.status && previousStatus !== transaction.status) {
-        notify(transaction.status === 'Accepted' ? `Good news! Your order ${transaction.id} was accepted.` : `Your order ${transaction.id} was declined by the shop.`)
+        const message = transaction.status === 'Preparing'
+          ? `Good news! Your order ${transaction.id} was accepted and is being prepared.`
+          : transaction.status === 'Ready'
+            ? 'Order is ready, go to the counter.'
+            : transaction.status === 'OutForDelivery'
+              ? 'Your order is on the way.'
+              : transaction.status === 'Completed'
+                ? `Your order ${transaction.id} is complete. Enjoy!`
+                : transaction.status === 'Declined'
+                  ? `Your order ${transaction.id} was declined by the shop.`
+                  : ''
+        if (message) notify(message)
       }
     })
   }, [transactions, role, buyerId])
@@ -473,12 +502,21 @@ function App() {
     setView('orders')
     notify('Order placed! We’ll let you know when the shop responds.')
   }
-  const setBuyerOrderStatus = (id: string, status: 'Accepted' | 'Declined') => {
+  const setBuyerOrderStatus = (id: string, status: BuyerOrderStatus) => {
     const order = transactions.find((item) => item.id === id)
-    if (!order || order.source !== 'buyer' || order.status !== 'Pending') return
-    setTransactions((items) => items.map((item) => item.id === id ? { ...item, status } : item))
+    if (!order || order.source !== 'buyer') return
+    const validTransition =
+      (order.status === 'Pending' && (status === 'Preparing' || status === 'Declined')) ||
+      (order.status === 'Preparing' && ((order.fulfillmentType === 'Delivery' && status === 'OutForDelivery') || (order.fulfillmentType !== 'Delivery' && status === 'Ready'))) ||
+      ((order.status === 'Ready' || order.status === 'OutForDelivery') && status === 'Completed')
+    if (!validTransition) return
+    setTransactions((items) => items.map((item) => item.id === id ? {
+      ...item,
+      status,
+      ...(status === 'Preparing' ? { handledBy: user } : {}),
+    } : item))
     addAudit(`${status} online order ${id} · ${money(order.total)}`)
-    if (status === 'Accepted') {
+    if (status === 'Preparing') {
       const nextStock = stock.map((stockItem) => {
         if (!stockItem.id.startsWith('cups-')) return stockItem
         const sizeKey = stockItem.id === 'cups-12' ? /small|12oz/i : stockItem.id === 'cups-16' ? /medium|16oz/i : /large|22oz/i
@@ -493,7 +531,12 @@ function App() {
       setStock(nextStock)
       if (movements.length) setStockMovements((items) => [...movements, ...items].slice(0, 500))
     }
-    notify(`Order ${id} ${status.toLowerCase()}.`)
+    const confirmation = status === 'Preparing' ? `Order ${id} accepted and moved to preparation.`
+      : status === 'Ready' ? `Order ${id} is ready for counter pickup.`
+        : status === 'OutForDelivery' ? `Order ${id} marked on the way.`
+          : status === 'Completed' ? `Order ${id} marked complete.`
+            : `Order ${id} declined.`
+    notify(confirmation)
   }
   const createProduct = () => {
     const name = newProductName.trim()
@@ -663,7 +706,7 @@ function App() {
   const navItems: { id: View; label: string; icon: typeof ShoppingCart; managerOnly?: boolean }[] = [
     { id: 'pos', label: 'Point of sale', icon: ShoppingCart },
     { id: 'dashboard', label: 'Overview', icon: LayoutDashboard, managerOnly: true },
-    { id: 'orders', label: 'Transactions', icon: FileText },
+    { id: 'orders', label: role === 'Cashier' ? 'Orders & sales' : 'Transactions', icon: FileText },
     { id: 'products', label: 'Menu & products', icon: Coffee, managerOnly: true },
     { id: 'inventory', label: 'Inventory', icon: Archive, managerOnly: true },
     { id: 'customers', label: 'Customers', icon: UserRound, managerOnly: true },
@@ -673,8 +716,9 @@ function App() {
     { id: 'settings', label: 'Settings', icon: Settings, managerOnly: true },
   ]
   const pendingBuyerOrders = transactions.filter((transaction) => transaction.source === 'buyer' && transaction.status === 'Pending')
+  const activeBuyerOrders = transactions.filter(isActiveBuyerOrder).sort((first, second) => first.date.localeCompare(second.date))
   const buyerOrders = transactions.filter((transaction) => transaction.source === 'buyer' && transaction.buyerId === buyerId).sort((first, second) => second.date.localeCompare(first.date))
-  const completedBuyerOrders = buyerOrders.filter((order) => order.status === 'Accepted' || !order.status)
+  const completedBuyerOrders = buyerOrders.filter((order) => order.status === 'Accepted' || order.status === 'Completed' || !order.status)
   const profileSpent = completedBuyerOrders.reduce((sum, order) => sum + order.total, 0)
   const openBuyerProfile = () => {
     setBuyerProfileName(user)
@@ -735,7 +779,7 @@ function App() {
       <div className="nav-heading">WORKSPACE</div>
       <nav>{navItems.filter((item) => !item.managerOnly || role === 'Manager').map((item) => {
         const Icon = item.icon
-        return <button key={item.id} className={`nav-link${view === item.id ? ' active' : ''}`} onClick={() => setView(item.id)} aria-label={item.label} title={item.label}><Icon size={18} /><span>{item.label}</span>{item.id === 'inventory' && lowStock.length > 0 && <b className="nav-count">{lowStock.length}</b>}{item.id === 'orders' && pendingBuyerOrders.length > 0 && role === 'Manager' && <b className="nav-count">{pendingBuyerOrders.length}</b>}</button>
+        return <button key={item.id} className={`nav-link${view === item.id ? ' active' : ''}`} onClick={() => setView(item.id)} aria-label={item.label} title={item.label}><Icon size={18} /><span>{item.label}</span>{item.id === 'inventory' && lowStock.length > 0 && <b className="nav-count">{lowStock.length}</b>}{item.id === 'orders' && pendingBuyerOrders.length > 0 && <b className="nav-count">{pendingBuyerOrders.length}</b>}</button>
       })}</nav>
       <div className="sidebar-bottom"><div className="shift-card"><div><span className="live-dot" /> SHIFT IN PROGRESS</div><strong>{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong><small>Started today</small></div>
         <button className="user-card" onClick={() => setModal('login')}><div className="avatar">{user.charAt(0).toUpperCase()}</div><span><b>{user}</b><small>{role}</small></span><ChevronDown size={15} /></button>
@@ -749,7 +793,7 @@ function App() {
           {role === 'Buyer' && <nav className="buyer-nav"><button type="button" className={view === 'pos' ? 'active' : ''} onClick={() => setView('pos')}>Menu</button><button type="button" className={view === 'orders' ? 'active' : ''} onClick={() => setView('orders')}>My orders{buyerOrders.some((order) => order.status === 'Pending') && <i />}</button><button type="button" className={view === 'profile' ? 'active' : ''} onClick={openBuyerProfile}>Profile</button></nav>}
           <button type="button" className="theme-toggle" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} aria-pressed={theme === 'dark'} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}</button>
           <button className={`sync-indicator ${!isOnline ? 'offline' : !syncEndpoint ? 'device-only' : syncStatus}`} title={syncTitle} onClick={() => setSyncAttempt((attempt) => attempt + 1)} aria-label={syncLabel}>{!isOnline ? <CloudOff size={14} /> : syncStatus === 'syncing' ? <RefreshCw size={14} className="spin" /> : <Cloud size={14} />}<span>{syncLabel}</span></button>
-          {role !== 'Buyer' && <><div className="today-label"><Clock3 size={15} /> {now.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' })}</div><button className="icon-button notification-button" onClick={() => { if (pendingBuyerOrders.length) { setView('orders'); notify(`${pendingBuyerOrders.length} customer order${pendingBuyerOrders.length === 1 ? '' : 's'} waiting for review.`) } else notify(lowStock.length ? `${lowStock.length} low-stock alerts` : 'You are all caught up.') }} aria-label="Notifications"><Bell size={18} />{(lowStock.length > 0 || pendingBuyerOrders.length > 0) && <i />}</button></>}
+          {role !== 'Buyer' && <><div className="today-label"><Clock3 size={15} /> {now.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' })}</div><button className="icon-button notification-button" onClick={() => { if (pendingBuyerOrders.length || activeBuyerOrders.length) { setView('orders'); notify(`${pendingBuyerOrders.length} new order${pendingBuyerOrders.length === 1 ? '' : 's'} · ${activeBuyerOrders.length} in progress.`) } else notify(lowStock.length ? `${lowStock.length} low-stock alerts` : 'You are all caught up.') }} aria-label="Notifications"><Bell size={18} />{(lowStock.length > 0 || pendingBuyerOrders.length > 0) && <i />}</button></>}
           {role !== 'Buyer' && <button className="top-avatar" aria-label="Sign out" title={`Sign out ${user}`} onClick={signOut}>{user.charAt(0).toUpperCase()}</button>}
         </div>
       </header>
@@ -764,7 +808,7 @@ function App() {
           photo={buyerProfilePhoto}
           orderCount={buyerOrders.length}
           completedCount={completedBuyerOrders.length}
-          pendingCount={buyerOrders.filter((order) => order.status === 'Pending').length}
+          pendingCount={buyerOrders.filter((order) => order.status === 'Pending' || isActiveBuyerOrder(order)).length}
           totalSpent={profileSpent}
           onNameChange={setBuyerProfileName}
           onPhoneChange={setBuyerProfilePhone}
@@ -799,7 +843,7 @@ function App() {
         {view === 'dashboard' && <>
           <div className="page-heading"><div><span className="eyebrow">STORE AT A GLANCE</span><h1>Good morning, {user.split(' ')[0]}.</h1><p>Here’s how your shop is doing today.</p></div><button className="outline-button" onClick={() => setView('reports')}><ArrowDownToLine size={16} /> Export report</button></div>
           <div className="metric-grid"><Metric label="Today's sales" value={money(todaySales)} change="From completed orders" icon={Wallet} tone="green" /><Metric label="Orders today" value={String(todayTransactions.length).padStart(2, '0')} change="Transactions completed" icon={ShoppingBag} tone="gold" /><Metric label="Average order" value={money(todayTransactions.length ? todaySales / todayTransactions.length : 0)} change="Per transaction" icon={Activity} tone="pink" /><Metric label="Low stock alerts" value={String(lowStock.length).padStart(2, '0')} change={lowStock.length ? 'Items need a restock' : 'All supplies in good shape'} icon={Archive} tone="brown" /></div>
-          <div className="dashboard-grid"><section className="content-panel sales-panel"><div className="panel-heading"><div><h2>Sales overview</h2><span>Revenue over the last 7 days</span></div><select defaultValue="7 days"><option>7 days</option><option>30 days</option></select></div><SalesChart transactions={transactions.filter((transaction) => transaction.status !== 'Pending' && transaction.status !== 'Declined')} now={now} /></section><section className="content-panel"><div className="panel-heading"><div><h2>Top picks</h2><span>Most ordered this week</span></div><button className="tiny-link" onClick={() => setView('reports')}>Full report <ArrowRight size={13} /></button></div><TopProducts transactions={transactions.filter((transaction) => transaction.status !== 'Pending' && transaction.status !== 'Declined')} /></section></div>
+          <div className="dashboard-grid"><section className="content-panel sales-panel"><div className="panel-heading"><div><h2>Sales overview</h2><span>Revenue over the last 7 days</span></div><select defaultValue="7 days"><option>7 days</option><option>30 days</option></select></div><SalesChart transactions={transactions.filter(isCompletedSale)} now={now} /></section><section className="content-panel"><div className="panel-heading"><div><h2>Top picks</h2><span>Most ordered this week</span></div><button className="tiny-link" onClick={() => setView('reports')}>Full report <ArrowRight size={13} /></button></div><TopProducts transactions={transactions.filter(isCompletedSale)} /></section></div>
           <section className="content-panel recent-panel"><div className="panel-heading"><div><h2>Recent orders</h2><span>Your latest activity</span></div><button className="tiny-link" onClick={() => setView('orders')}>View all <ArrowRight size={13} /></button></div><TransactionTable transactions={transactions.slice(0, 5)} onReceipt={setReceipt} /></section>
         </>}
 
@@ -818,15 +862,32 @@ function App() {
         {view === 'customers' && <><PageTitle eyebrow="CUSTOMER BOOK" title="Customers" subtitle="Manage customer details and view each customer’s sales history." action={<button className="primary-button" onClick={() => { setCustomerEdit(null); setModal('customer') }}><Plus size={16} /> Add customer</button>} /><div className="metric-grid"><Metric label="Customer records" value={String(customers.filter((customer) => customer.active).length).padStart(2, '0')} change="Active customer profiles" icon={Users} tone="green" /><Metric label="Linked sales" value={String(transactions.filter((transaction) => transaction.customerId).length).padStart(2, '0')} change="Sales assigned to a customer" icon={ShoppingBag} tone="gold" /></div><div className="table-toolbar"><label className="search-field"><Search size={16} /><input placeholder="Search name, phone, or email..." value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} /></label></div><section className="content-panel table-panel"><CustomerTable customers={customers.filter((customer) => customer.active && `${customer.name} ${customer.phone} ${customer.email}`.toLowerCase().includes(customerSearch.toLowerCase()))} sales={transactions} onEdit={(customer) => { setCustomerEdit(customer); setModal('customer') }} onArchive={(customer) => { setCustomers((items) => items.map((item) => item.id === customer.id ? { ...item, active: false } : item)); addAudit(`Archived customer ${customer.name}`) }} onSales={(customer) => { setOrdersCustomerFilter(customer.id); setSearch(''); setView('orders') }} /></section><section className="content-panel audit-panel"><div className="panel-heading"><div><h2>Archived customer records</h2><span>Archived profiles stay attached to their past sales.</span></div></div><CustomerTable customers={customers.filter((customer) => !customer.active)} sales={transactions} onEdit={(customer) => { setCustomerEdit(customer); setModal('customer') }} onArchive={(customer) => setCustomers((items) => items.map((item) => item.id === customer.id ? { ...item, active: true } : item))} onSales={(customer) => { setOrdersCustomerFilter(customer.id); setView('orders') }} archiveLabel="Restore" /></section></>}
 
         {view === 'orders' && role !== 'Buyer' && <>
-          <PageTitle eyebrow={role === 'Manager' && pendingBuyerOrders.length ? 'NEW CUSTOMER ORDERS' : 'SALES REGISTER'} title={pendingBuyerOrders.length && role === 'Manager' ? `${pendingBuyerOrders.length} order${pendingBuyerOrders.length === 1 ? '' : 's'} need a little love.` : 'Sales & receipts'} subtitle="Review online orders, respond to customers, and keep track of every sale." />
-          {role === 'Manager' && pendingBuyerOrders.length > 0 && <section className="incoming-orders-panel">
-            <div className="incoming-orders-heading"><div className="incoming-orders-icon"><Bell size={18} /></div><div><b>Just in from your customers</b><span>Accept an order to confirm it, or decline if you’re unable to make it.</span></div><span className="incoming-count">{pendingBuyerOrders.length} waiting</span></div>
+          <PageTitle eyebrow={pendingBuyerOrders.length ? 'NEW CUSTOMER ORDERS' : activeBuyerOrders.length ? 'CUSTOMER ORDERS IN PROGRESS' : 'SALES REGISTER'} title={pendingBuyerOrders.length ? `${pendingBuyerOrders.length} order${pendingBuyerOrders.length === 1 ? '' : 's'} need a little love.` : activeBuyerOrders.length ? `${activeBuyerOrders.length} order${activeBuyerOrders.length === 1 ? '' : 's'} in progress.` : 'Sales & receipts'} subtitle="New orders stay here until a staff member takes them. Accepted orders remain in progress until preparation and handoff are finished." />
+          {pendingBuyerOrders.length > 0 && <section className="incoming-orders-panel">
+            <div className="incoming-orders-heading"><div className="incoming-orders-icon"><Bell size={18} /></div><div><b>New customer orders</b><span>Any manager or cashier can take an order. Once accepted, it moves to the in-progress list.</span></div><span className="incoming-count">{pendingBuyerOrders.length} waiting</span></div>
             <div className="incoming-order-list">{pendingBuyerOrders.map((order) => <article className="incoming-order-card" key={order.id}>
               <div className="incoming-order-main"><div className="incoming-customer"><span className="person-avatar">{(order.customerName || 'C').charAt(0).toUpperCase()}</span><div><b>{order.customerName || 'Customer'}</b><span>{order.customerPhone || order.customerEmail || 'Online customer'} · {new Date(order.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div></div><span className="incoming-order-total">{money(order.total)}</span></div>
               {(order.customerEmail || order.customerAddress) && <div className="incoming-contact-details">{order.customerEmail && <span><Mail size={12} /> {order.customerEmail}</span>}{order.customerAddress && <span><MapPin size={12} /> {order.customerAddress}</span>}</div>}
               <div className="incoming-order-lines">{order.items.map((item, index) => <div key={`${order.id}-${index}`}><span>{item.quantity} × {item.name} <small>{item.variant} · {item.sugar} sugar{item.addons.length ? ` · ${item.addons.join(', ')}` : ''}</small></span><b>{money(item.price * item.quantity)}</b></div>)}</div>
-              <div className="incoming-order-actions"><span><CreditCard size={14} /> {order.fulfillmentType || 'Dine in'} · {order.method}{order.reference ? ` · Ref ${order.reference}` : ''} · {order.id}</span><div><button className="decline-order-button" onClick={() => setBuyerOrderStatus(order.id, 'Declined')}><X size={14} /> Decline</button><button className="accept-order-button" onClick={() => setBuyerOrderStatus(order.id, 'Accepted')}><Check size={15} /> Accept order</button></div></div>
+              <div className="incoming-order-actions"><span><CreditCard size={14} /> {order.fulfillmentType || 'Dine in'} · {order.method}{order.reference ? ` · Ref ${order.reference}` : ''} · {order.id}</span><div><button className="decline-order-button" onClick={() => setBuyerOrderStatus(order.id, 'Declined')}><X size={14} /> Decline</button><button className="accept-order-button" onClick={() => setBuyerOrderStatus(order.id, 'Preparing')}><Check size={15} /> Accept & prepare</button></div></div>
             </article>)}</div>
+          </section>}
+          {activeBuyerOrders.length > 0 && <section className="incoming-orders-panel active-orders-panel">
+            <div className="incoming-orders-heading"><div className="incoming-orders-icon"><Clock3 size={18} /></div><div><b>Orders in progress</b><span>These orders stay here until staff completes the handoff.</span></div><span className="incoming-count">{activeBuyerOrders.length} active</span></div>
+            <div className="incoming-order-list">{activeBuyerOrders.map((order) => {
+              const nextStatus: BuyerOrderStatus = order.status === 'Preparing' ? order.fulfillmentType === 'Delivery' ? 'OutForDelivery' : 'Ready' : 'Completed'
+              const nextAction = order.status === 'Preparing' ? order.fulfillmentType === 'Delivery' ? 'Mark on the way' : 'Mark ready for pickup' : order.status === 'Ready' ? 'Complete pickup' : 'Mark delivered'
+              const customerMessage = order.status === 'Preparing' ? 'Staff is preparing this order.'
+                : order.status === 'Ready' ? 'Order is ready, go to the counter.'
+                  : 'Your order is on the way.'
+              return <article className="incoming-order-card active-order-card" key={order.id}>
+                <div className="incoming-order-main"><div className="incoming-customer"><span className="person-avatar">{(order.customerName || 'C').charAt(0).toUpperCase()}</span><div><b>{order.customerName || 'Customer'}</b><span>{order.id} · {order.handledBy ? `Accepted by ${order.handledBy}` : 'Preparing'}</span></div></div><span className="incoming-order-total">{money(order.total)}</span></div>
+                {(order.customerAddress || order.customerPhone) && <div className="incoming-contact-details">{order.customerPhone && <span><Phone size={12} /> {order.customerPhone}</span>}{order.customerAddress && <span><MapPin size={12} /> {order.customerAddress}</span>}</div>}
+                <div className="incoming-order-lines">{order.items.map((item, index) => <div key={`${order.id}-${index}`}><span>{item.quantity} × {item.name} <small>{item.variant} · {item.sugar} sugar{item.addons.length ? ` · ${item.addons.join(', ')}` : ''}</small></span><b>{money(item.price * item.quantity)}</b></div>)}</div>
+                <div className="active-order-status"><span className={`order-status-pill status-${(order.status || 'Preparing').toLowerCase()}`}>{order.status === 'Preparing' ? 'Preparing' : order.status === 'Ready' ? 'Ready for pickup' : 'On the way'}</span><span>{customerMessage}</span></div>
+                <div className="incoming-order-actions"><span><CreditCard size={14} /> {order.fulfillmentType || 'Dine in'} · {order.method}{order.reference ? ` · Ref ${order.reference}` : ''}</span><div><button className="accept-order-button" onClick={() => setBuyerOrderStatus(order.id, nextStatus)}><Check size={15} /> {nextAction}</button></div></div>
+              </article>
+            })}</div>
           </section>}
           <div className="metric-grid"><Metric label="Today's sales" value={money(visibleTodayTransactions.reduce((sum, item) => sum + item.total, 0))} change={`${visibleTodayTransactions.length} completed orders today`} icon={Wallet} tone="green" /><Metric label={role === 'Manager' ? 'All orders' : 'Your transactions'} value={String(visibleTransactions.length).padStart(2, '0')} change={pendingBuyerOrders.length ? `${pendingBuyerOrders.length} awaiting response` : 'Saved on this device'} icon={FileText} tone="gold" /></div>
           <section className="content-panel table-panel transactions-page"><div className="panel-heading"><div><h2>{ordersCustomerFilter ? `Sales for ${customers.find((customer) => customer.id === ordersCustomerFilter)?.name || 'customer'}` : role === 'Manager' ? 'Sales & online orders' : 'Your transactions'}</h2><span>Review order status or reprint a completed receipt.</span></div><div className="table-toolbar">{ordersCustomerFilter && <button className="table-action" onClick={() => setOrdersCustomerFilter('')}>All sales</button>}<label className="search-field"><Search size={16} /><input placeholder="Search receipt or customer..." value={search} onChange={(event) => setSearch(event.target.value)} /></label></div></div><TransactionTable transactions={visibleTransactions.filter((item) => (!ordersCustomerFilter || item.customerId === ordersCustomerFilter) && `${item.id} ${item.customerName || ''}`.toLowerCase().includes(search.toLowerCase()))} onReceipt={setReceipt} /></section>
@@ -836,7 +897,7 @@ function App() {
 
         {view === 'activity' && <><PageTitle eyebrow="SEPARATE OPERATIONAL HISTORY" title="Activity log" subtitle="Staff actions and inventory movements are separate from customer sales." /><div className="dashboard-grid"><section className="content-panel"><div className="panel-heading"><div><h2>Staff & store audit</h2><span>Sign-ins, menu edits, and admin actions.</span></div></div><AuditList audit={audit} /></section><section className="content-panel"><div className="panel-heading"><div><h2>Inventory movements</h2><span>Stock changes and sale deductions.</span></div></div><StockMovementTable movements={stockMovements.slice(0, 12)} /></section></div><section className="content-panel table-panel recent-panel"><div className="panel-heading"><div><h2>Sales stay separate</h2><span>Customer purchases and receipts are maintained in the sales register.</span></div><button className="tiny-link" onClick={() => setView('orders')}>Open sales <ArrowRight size={13} /></button></div></section></>}
 
-        {view === 'reports' && <><PageTitle eyebrow="NUMBERS WITH A LITTLE SPARKLE" title={role === 'Manager' ? 'Reports' : 'Shift closeout'} subtitle={role === 'Manager' ? 'A clearer look at how your shop is doing.' : 'Your completed sales for this shift.'} action={<button className="outline-button" onClick={() => window.print()}><Printer size={16} /> Print report</button>} /><div className="report-filter">{(['daily', 'weekly', 'monthly'] as const).filter((range) => role === 'Manager' || range === 'daily').map((range) => <button className={`filter-chip${reportRange === range ? ' selected' : ''}`} key={range} onClick={() => setReportRange(range)}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>)}<span>{role === 'Manager' ? `All-time transactions: ${visibleTransactions.filter((transaction) => transaction.status !== 'Pending' && transaction.status !== 'Declined').length}` : `Your transactions: ${visibleTransactions.length}`}</span></div><div className="metric-grid"><Metric label={role === 'Manager' ? 'Gross sales' : 'Your cash out'} value={money(periodSales)} change={`${reportRange} · before discounts`} icon={Wallet} tone="green" />{role === 'Manager' && <Metric label="Discounts given" value={money(periodTransactions.reduce((sum, item) => sum + item.discount, 0))} change={`Across ${reportRange} period`} icon={Tag} tone="gold" />}<Metric label="Completed orders" value={String(periodTransactions.length)} change={`Across ${reportRange} period`} icon={ShoppingBag} tone="pink" /><Metric label="Avg. order value" value={money(periodTransactions.length ? periodSales / periodTransactions.length : 0)} change={`Across ${reportRange} period`} icon={BarChart3} tone="brown" /></div>{role === 'Manager' ? <><section className="content-panel sales-panel report-chart"><div className="panel-heading"><div><h2>Revenue trend</h2><span>Sales from the last 7 days</span></div></div><SalesChart transactions={transactions.filter((transaction) => transaction.status !== 'Pending' && transaction.status !== 'Declined')} now={now} /></section><section className="content-panel table-panel"><div className="panel-heading"><div><h2>Product performance</h2><span>Best-selling drinks from recorded orders</span></div></div><TopProducts transactions={periodTransactions} /></section></> : <section className="content-panel table-panel"><div className="panel-heading"><div><h2>Your completed sales</h2><span>Transactions linked to your cashier account.</span></div></div><TransactionTable transactions={periodTransactions} onReceipt={setReceipt} /></section>}</>}
+        {view === 'reports' && <><PageTitle eyebrow="NUMBERS WITH A LITTLE SPARKLE" title={role === 'Manager' ? 'Reports' : 'Shift closeout'} subtitle={role === 'Manager' ? 'A clearer look at how your shop is doing.' : 'Your completed sales for this shift.'} action={<button className="outline-button" onClick={() => window.print()}><Printer size={16} /> Print report</button>} /><div className="report-filter">{(['daily', 'weekly', 'monthly'] as const).filter((range) => role === 'Manager' || range === 'daily').map((range) => <button className={`filter-chip${reportRange === range ? ' selected' : ''}`} key={range} onClick={() => setReportRange(range)}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>)}<span>{role === 'Manager' ? `All-time transactions: ${visibleTransactions.filter(isCompletedSale).length}` : `Your transactions: ${visibleTransactions.length}`}</span></div><div className="metric-grid"><Metric label={role === 'Manager' ? 'Gross sales' : 'Your cash out'} value={money(periodSales)} change={`${reportRange} · before discounts`} icon={Wallet} tone="green" />{role === 'Manager' && <Metric label="Discounts given" value={money(periodTransactions.reduce((sum, item) => sum + item.discount, 0))} change={`Across ${reportRange} period`} icon={Tag} tone="gold" />}<Metric label="Completed orders" value={String(periodTransactions.length)} change={`Across ${reportRange} period`} icon={ShoppingBag} tone="pink" /><Metric label="Avg. order value" value={money(periodTransactions.length ? periodSales / periodTransactions.length : 0)} change={`Across ${reportRange} period`} icon={BarChart3} tone="brown" /></div>{role === 'Manager' ? <><section className="content-panel sales-panel report-chart"><div className="panel-heading"><div><h2>Revenue trend</h2><span>Sales from the last 7 days</span></div></div><SalesChart transactions={transactions.filter(isCompletedSale)} now={now} /></section><section className="content-panel table-panel"><div className="panel-heading"><div><h2>Product performance</h2><span>Best-selling drinks from recorded orders</span></div></div><TopProducts transactions={periodTransactions} /></section></> : <section className="content-panel table-panel"><div className="panel-heading"><div><h2>Your completed sales</h2><span>Transactions linked to your cashier account.</span></div></div><TransactionTable transactions={periodTransactions} onReceipt={setReceipt} /></section>}</>}
 
         {view === 'settings' && <><PageTitle eyebrow="THE LITTLE DETAILS" title="Store settings" subtitle="Make this space feel like your shop." /><section className="content-panel settings-panel"><div className="settings-section"><div><h2>Store profile</h2><span>What customers see on their receipt.</span></div><div className="settings-fields"><label>Store name<input defaultValue="Shots & Sparkles" /></label><label>Social handle<input defaultValue="@shotsandsparkles" /></label><label>Contact number<input defaultValue="[redacted-phone]" /></label><button className="primary-button" onClick={() => notify('Store profile saved.')}>Save changes <Check size={15} /></button></div></div><div className="settings-section"><div><h2>Sales & tax</h2><span>Tax is calculated on each order.</span></div><div className="setting-toggle"><span><b>VAT</b><small>12% tax applied at checkout.</small></span><span className="toggle enabled">ON</span></div></div><div className="settings-section"><div><h2>Session security</h2><span>Automatic sign-out for inactive sessions.</span></div><div className="setting-toggle"><span><b>Session timeout</b><small>Automatically signs out after 30 minutes.</small></span><span className="toggle enabled">ON</span></div></div><div className="settings-section"><div><h2>Audit log</h2><span>Recent changes made in this store.</span></div><AuditList audit={audit} /></div><div className="note-banner"><ShieldCheck size={16} /><span>This client-only demo stores records in this browser. For real authentication, staff controls, and secure backups, connect a server before opening your store.</span></div></section></>}
       </div>
@@ -1007,13 +1068,21 @@ function BuyerStore({ products, category, search, cart, subtotal, tax, total, co
 }
 
 function BuyerOrderHistory({ orders, onShop }: { orders: Transaction[]; onShop: () => void }) {
-  const [filter, setFilter] = useState<'all' | 'Pending' | 'Accepted' | 'Declined'>('all')
-  const orderStatus = (order: Transaction) => order.status || 'Accepted'
-  const filteredOrders = orders.filter((order) => filter === 'all' || orderStatus(order) === filter)
+  const [filter, setFilter] = useState<'all' | 'Pending' | 'In progress' | 'Completed' | 'Declined'>('all')
+  const orderStatus = (order: Transaction): BuyerOrderStatus => order.status || 'Accepted'
+  const statusGroup = (order: Transaction) => {
+    const status = orderStatus(order)
+    if (status === 'Pending') return 'Pending'
+    if (status === 'Preparing' || status === 'Ready' || status === 'OutForDelivery') return 'In progress'
+    if (status === 'Declined') return 'Declined'
+    return 'Completed'
+  }
+  const filteredOrders = orders.filter((order) => filter === 'all' || statusGroup(order) === filter)
   const filterOptions: { id: typeof filter; label: string; count: number }[] = [
     { id: 'all', label: 'All orders', count: orders.length },
     { id: 'Pending', label: 'Waiting', count: orders.filter((order) => orderStatus(order) === 'Pending').length },
-    { id: 'Accepted', label: 'Accepted', count: orders.filter((order) => orderStatus(order) === 'Accepted').length },
+    { id: 'In progress', label: 'In progress', count: orders.filter((order) => statusGroup(order) === 'In progress').length },
+    { id: 'Completed', label: 'Completed', count: orders.filter((order) => statusGroup(order) === 'Completed').length },
     { id: 'Declined', label: 'Declined', count: orders.filter((order) => orderStatus(order) === 'Declined').length },
   ]
   return <div className="buyer-history">
@@ -1022,14 +1091,23 @@ function BuyerOrderHistory({ orders, onShop }: { orders: Transaction[]; onShop: 
     {filteredOrders.length ? <div className="buyer-order-list">{filteredOrders.map((order) => {
       const status = orderStatus(order)
       const itemCount = order.items.reduce((quantity, item) => quantity + item.quantity, 0)
+      const statusLabel = status === 'Pending' ? 'Waiting for the shop'
+        : status === 'Preparing' ? 'Being prepared'
+          : status === 'Ready' ? 'Ready for pickup'
+            : status === 'OutForDelivery' ? 'On the way'
+              : status === 'Declined' ? 'Not accepted'
+                : 'Completed'
       return <article className="buyer-order-card" key={order.id}>
-        <div className="buyer-order-card-top"><div><span className="eyebrow">ORDER {order.id}</span><small>{new Date(order.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</small></div><span className={`buyer-status status-${status.toLowerCase()}`}>{status === 'Pending' && <i />}{status === 'Accepted' && <Check size={13} />}{status === 'Declined' && <X size={13} />}{status === 'Pending' ? 'Waiting for the shop' : status === 'Accepted' ? 'Accepted' : 'Not accepted'}</span></div>
+        <div className="buyer-order-card-top"><div><span className="eyebrow">ORDER {order.id}</span><small>{new Date(order.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</small></div><span className={`buyer-status status-${status.toLowerCase()}`}>{status === 'Pending' && <i />}{status === 'Declined' && <X size={13} />}{status !== 'Pending' && status !== 'Declined' && <Check size={13} />}{statusLabel}</span></div>
         <div className="buyer-order-items">{order.items.map((item, index) => <div key={`${order.id}-${index}`}><span>{item.quantity} × {item.name} <small>{item.variant}</small></span><b>{money(item.price * item.quantity)}</b></div>)}</div>
         <div className="buyer-order-card-bottom"><span>{order.fulfillmentType || 'Dine in'} · {order.method} · {itemCount} {itemCount === 1 ? 'item' : 'items'}</span><strong>{money(order.total)}</strong></div>
         {order.reference && <div className="buyer-order-message"><CreditCard size={14} /> GCash reference: {order.reference}</div>}
         {order.customerAddress && <div className="buyer-order-message"><MapPin size={14} /> Delivery to: {order.customerAddress}</div>}
         {status === 'Pending' && <div className="buyer-order-message"><Clock3 size={15} /> Your order is with the shop. Check back soon for an update.</div>}
-        {status === 'Accepted' && <div className="buyer-order-message accepted"><Sparkles size={15} /> It’s a yes! The team is getting your order ready.</div>}
+        {status === 'Preparing' && <div className="buyer-order-message accepted"><Sparkles size={15} /> The shop accepted your order and is preparing it.</div>}
+        {status === 'Ready' && <div className="buyer-order-message accepted"><Check size={15} /> Order is ready, go to the counter.</div>}
+        {status === 'OutForDelivery' && <div className="buyer-order-message accepted"><MapPin size={15} /> Your order is on the way.</div>}
+        {(status === 'Completed' || status === 'Accepted') && <div className="buyer-order-message accepted"><Check size={15} /> Your order is complete. Enjoy!</div>}
         {status === 'Declined' && <div className="buyer-order-message declined"><CircleHelp size={15} /> The shop couldn’t accept this order. Please contact the team or try again.</div>}
       </article>
     })}</div> : orders.length ? <div className="buyer-history-empty"><div><Search size={24} /></div><h2>No {filter.toLowerCase()} orders</h2><p>Try another status to see more of your order history.</p><button className="buyer-place-order" onClick={() => setFilter('all')}>Show all orders <ArrowRight size={16} /></button></div> : <div className="buyer-history-empty"><div><ShoppingBag size={25} /></div><h2>No orders just yet</h2><p>Your next favorite drink is only a few taps away.</p><button className="buyer-place-order" onClick={onShop}>Explore the menu <ArrowRight size={16} /></button></div>}
@@ -1051,7 +1129,7 @@ function TopProducts({ transactions }: { transactions: Transaction[] }) {
   const top = [...counts.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5)
   return top.length ? <div className="top-products">{top.map((item, index) => <div className="top-product" key={item.name}><span className={`rank rank-${index + 1}`}>{String(index + 1).padStart(2, '0')}</span><span className={`top-product-icon color-${item.category}`}><Coffee size={16} /></span><span><b>{item.name}</b><small>{categoriesLabels[item.category]}</small></span><strong>{item.quantity} sold</strong></div>)}</div> : <div className="empty-table"><ShoppingBag size={20} /><span>Completed orders will show your top picks.</span></div>
 }
-function TransactionTable({ transactions, onReceipt }: { transactions: Transaction[]; onReceipt: (transaction: Transaction) => void }) { return <div className="table-scroll"><table><thead><tr><th>ORDER</th><th>DATE & TIME</th><th>CUSTOMER</th><th>CHANNEL</th><th>ITEMS</th><th>PAYMENT</th><th>STATUS</th><th>TOTAL</th><th></th></tr></thead><tbody>{transactions.length ? transactions.map((transaction) => { const status = transaction.status || 'Accepted'; return <tr key={transaction.id}><td><b className="receipt-cell">{transaction.id}</b></td><td>{new Date(transaction.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</td><td>{transaction.customerName || 'Walk-in'}</td><td>{transaction.source === 'buyer' ? 'Online' : transaction.cashier}</td><td>{transaction.items.reduce((sum, item) => sum + item.quantity, 0)} items</td><td><span className="payment-pill">{transaction.method}</span></td><td><span className={`order-status-pill status-${status.toLowerCase()}`}>{status}</span></td><td><b>{money(transaction.total)}</b></td><td>{status === 'Accepted' && <button className="icon-button row-action" onClick={() => onReceipt(transaction)} aria-label={`Reprint ${transaction.id}`}><Printer size={15} /></button>}</td></tr> }) : <tr><td colSpan={9}><div className="empty-table"><FileText size={20} /><span>No sales recorded in this view yet.</span></div></td></tr>}</tbody></table></div> }
+function TransactionTable({ transactions, onReceipt }: { transactions: Transaction[]; onReceipt: (transaction: Transaction) => void }) { return <div className="table-scroll"><table><thead><tr><th>ORDER</th><th>DATE & TIME</th><th>CUSTOMER</th><th>CHANNEL</th><th>ITEMS</th><th>PAYMENT</th><th>STATUS</th><th>TOTAL</th><th></th></tr></thead><tbody>{transactions.length ? transactions.map((transaction) => { const status = transaction.status || 'Accepted'; return <tr key={transaction.id}><td><b className="receipt-cell">{transaction.id}</b></td><td>{new Date(transaction.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</td><td>{transaction.customerName || 'Walk-in'}</td><td>{transaction.source === 'buyer' ? 'Online' : transaction.cashier}</td><td>{transaction.items.reduce((sum, item) => sum + item.quantity, 0)} items</td><td><span className="payment-pill">{transaction.method}</span></td><td><span className={`order-status-pill status-${status.toLowerCase()}`}>{status === 'OutForDelivery' ? 'On the way' : status}</span></td><td><b>{money(transaction.total)}</b></td><td>{(status === 'Accepted' || status === 'Completed') && <button className="icon-button row-action" onClick={() => onReceipt(transaction)} aria-label={`Reprint ${transaction.id}`}><Printer size={15} /></button>}</td></tr> }) : <tr><td colSpan={9}><div className="empty-table"><FileText size={20} /><span>No sales recorded in this view yet.</span></div></td></tr>}</tbody></table></div> }
 function MenuProductCard({ product, onEdit, onToggle, onArchive }: { product: Product; onEdit: () => void; onToggle: () => void; onArchive: () => void }) {
   const startingPrice = Math.min(...product.variants.map((variant) => variant.price))
   return <article className="menu-product-card">
